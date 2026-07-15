@@ -1,6 +1,6 @@
 {
   "name": "minha-stream-simples",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "Site de streaming simples com painel e catálogo salvo automaticamente no GitHub.",
   "main": "server.js",
@@ -10,7 +10,7 @@
     "check": "node --check server.js && node --check public/assets/app.js && node --check public/assets/watch.js && node --check public/assets/admin.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "dependencies": {
     "compression": "^1.7.5",

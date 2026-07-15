@@ -3,7 +3,7 @@ services:
     name: minha-stream-simples
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci --no-audit --no-fund
     startCommand: npm start
     healthCheckPath: /health
     envVars:
