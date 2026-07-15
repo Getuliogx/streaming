@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b10">
+  <title>Assistir | Minha Stream</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="watch-page">
+  <header class="topbar">
+    <a class="brand" href="/">MINHA<span>STREAM</span></a>
+    <div class="top-actions">
+      <a class="ghost-button" href="/">← Catálogo</a>
+    </div>
+  </header>
+
+  <main class="watch-main">
+    <section class="player-shell">
+      <div id="playerMount" class="player-mount">
+        <div class="loading">Carregando player…</div>
+      </div>
+    </section>
+
+    <section class="watch-details">
+      <div>
+        <p id="watchEyebrow" class="eyebrow"></p>
+        <h1 id="watchTitle">Carregando…</h1>
+        <p id="watchMeta" class="watch-meta"></p>
+        <p id="watchDescription" class="watch-description"></p>
+      </div>
+      <button id="favoriteButton" class="ghost-button" type="button">♡ Favoritar</button>
+    </section>
+
+    <div id="watchError" class="error-box hidden"></div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+  <script src="/assets/watch.js" defer></script>
+</body>
+</html>

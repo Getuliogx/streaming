@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b10">
+  <title>Minha Stream</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">MINHA<span>STREAM</span></a>
+    <nav class="top-actions">
+      <label class="search-box">
+        <span aria-hidden="true">⌕</span>
+        <input id="searchInput" type="search" placeholder="Buscar filmes e séries" autocomplete="off">
+      </label>
+      <a class="ghost-button" href="/admin">Painel</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="hero" class="hero hidden" aria-label="Destaque">
+      <div class="hero-shade"></div>
+      <div class="hero-content">
+        <p class="eyebrow">EM DESTAQUE</p>
+        <h1 id="heroTitle"></h1>
+        <p id="heroDescription"></p>
+        <a id="heroButton" class="primary-button" href="#">▶ Assistir</a>
+      </div>
+    </section>
+
+    <section class="content-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CATÁLOGO</p>
+          <h2>Filmes e episódios</h2>
+        </div>
+        <span id="resultCount" class="muted"></span>
+      </div>
+      <div id="catalogGrid" class="catalog-grid" aria-live="polite"></div>
+      <div id="emptyState" class="empty-state hidden">
+        <strong>Nenhum conteúdo encontrado.</strong>
+        <span>Cadastre um vídeo no painel administrativo.</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>Use apenas vídeos próprios ou que você tenha autorização para exibir.</footer>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

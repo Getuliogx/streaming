@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b10">
+  <title>Painel | Minha Stream</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">MINHA<span>STREAM</span></a>
+    <div class="top-actions">
+      <a class="ghost-button" href="/">Ver site</a>
+      <button id="logoutButton" class="ghost-button hidden" type="button">Sair</button>
+    </div>
+  </header>
+
+  <main class="admin-main">
+    <section id="loginPanel" class="login-card">
+      <p class="eyebrow">PAINEL</p>
+      <h1>Entrar</h1>
+      <p class="muted">Digite a senha que você colocou em <code>ADMIN_PASSWORD</code> no Render.</p>
+      <form id="loginForm" class="stack-form">
+        <label>Senha
+          <input name="password" type="password" required autofocus>
+        </label>
+        <button class="primary-button" type="submit">Entrar</button>
+        <p id="loginMessage" class="form-message"></p>
+      </form>
+    </section>
+
+    <section id="adminPanel" class="admin-layout hidden">
+      <aside class="editor-card">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">CADASTRO</p>
+            <h1 id="formHeading">Adicionar vídeo</h1>
+          </div>
+          <button id="resetButton" class="text-button" type="button">Limpar</button>
+        </div>
+
+        <form id="titleForm" class="stack-form">
+          <input name="id" type="hidden">
+
+          <label>Título do filme ou episódio *
+            <input name="title" maxlength="180" required placeholder="Ex.: Filme 1">
+          </label>
+
+          <label>Link do vídeo *
+            <input name="source_url" required placeholder="Cole o link do OK.ru, Drive ou servidor do PC">
+          </label>
+          <p class="source-help">O site identifica automaticamente o tipo do link.</p>
+
+          <label>Link da capa
+            <input name="cover_url" type="url" placeholder="https://.../capa.jpg">
+          </label>
+
+          <label>Descrição
+            <textarea name="description" rows="3" placeholder="Opcional"></textarea>
+          </label>
+
+          <div class="field-grid two">
+            <label>Tipo
+              <select name="content_type">
+                <option value="movie">Filme ou vídeo</option>
+                <option value="episode">Episódio</option>
+              </select>
+            </label>
+            <label>Ano
+              <input name="year" type="number" min="1888" max="2200" placeholder="Opcional">
+            </label>
+          </div>
+
+          <details>
+            <summary>Opções de série e destaque</summary>
+            <div class="stack-form details-fields">
+              <label>Nome da série
+                <input name="series_title" maxlength="180" placeholder="Opcional">
+              </label>
+              <div class="field-grid two">
+                <label>Temporada
+                  <input name="season" type="number" min="0">
+                </label>
+                <label>Episódio
+                  <input name="episode" type="number" min="0">
+                </label>
+              </div>
+              <label>Gêneros
+                <input name="genres" placeholder="Ex.: Ação, Drama">
+              </label>
+              <label>Imagem grande de fundo
+                <input name="backdrop_url" type="url" placeholder="Opcional">
+              </label>
+              <div class="check-row">
+                <label><input name="featured" type="checkbox"> Mostrar em destaque</label>
+                <label><input name="published" type="checkbox" checked> Publicado</label>
+              </div>
+            </div>
+          </details>
+
+          <button class="primary-button" type="submit">Salvar</button>
+          <p id="formMessage" class="form-message"></p>
+        </form>
+      </aside>
+
+      <section class="list-card">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">CATÁLOGO</p>
+            <h2>Vídeos adicionados</h2>
+          </div>
+          <span id="databaseBadge" class="status-badge"></span>
+        </div>
+        <div id="storageWarning" class="error-box hidden"></div>
+        <div id="adminList" class="admin-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "minha-stream-simples",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Site de streaming simples com painel e catálogo salvo automaticamente no GitHub.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check public/assets/app.js && node --check public/assets/watch.js && node --check public/assets/admin.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-session": "^1.18.1",
+    "helmet": "^8.0.0"
+  }
+}

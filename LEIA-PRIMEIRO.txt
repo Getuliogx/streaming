@@ -1,0 +1,25 @@
+COMO INSTALAR SEM BANCO DE DADOS
+
+1. Envie todos estes arquivos para um repositório do GitHub.
+
+2. Crie um token do GitHub para esse repositório com permissão de leitura e gravação de conteúdo.
+
+3. No Render, crie um Web Service e coloque somente:
+
+ADMIN_PASSWORD = sua senha
+GITHUB_TOKEN = seu token
+GITHUB_REPO = usuario/repositorio
+NODE_ENV = production
+
+Build Command: npm install
+Start Command: npm start
+
+4. Depois do deploy, abra:
+https://seu-site.onrender.com/admin
+
+Digite a senha, cole o título e o link do vídeo e clique em SALVAR.
+
+PRONTO.
+Não tem PostgreSQL.
+Não precisa editar arquivo do GitHub.
+O painel salva tudo automaticamente.
