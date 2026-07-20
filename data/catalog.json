@@ -482,27 +482,5 @@
     "published": true,
     "created_at": "2026-07-20T12:39:22.804Z",
     "updated_at": "2026-07-20T12:39:22.804Z"
-  },
-  {
-    "id": 23,
-    "title": "View",
-    "series_title": "O Espetacular Homem-Aranha",
-    "description": "Esta série recria as façanhas de Peter Parker, um garoto que é picado por uma aranha radioativa e passa a ter superpoderes, tornando-se o Homem-Aranha.",
-    "year": 2008,
-    "genres": "Action & Adventure, Animação, Kids, Família",
-    "cover_url": "https://image.tmdb.org/t/p/w500/mtelBDEhr0GliQ2MRPBUmgxiXJY.jpg",
-    "backdrop_url": "https://image.tmdb.org/t/p/original/fypGcrQCyb9vQ7L8AM6PHCjQSBC.jpg",
-    "episode_image_url": "",
-    "content_type": "episode",
-    "season": 1,
-    "episode": 23,
-    "source_type": "okru",
-    "source_url": "https://ok.ru/video/8184441604658",
-    "tmdb_id": 3854,
-    "tmdb_type": "tv",
-    "featured": false,
-    "published": true,
-    "created_at": "2026-07-20T12:39:22.804Z",
-    "updated_at": "2026-07-20T12:39:22.804Z"
   }
 ]
