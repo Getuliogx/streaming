@@ -30,7 +30,7 @@ const MAX_PLAYLIST_ITEMS = 1500;
 const MAX_OKRU_PAGES = 90;
 const MAX_OKRU_ITEMS = 1500;
 const OKRU_TIMEOUT_MS = 25_000;
-const OKRU_IMPORT_VERSION = '7.0.0';
+const OKRU_IMPORT_VERSION = '8.0.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -713,6 +713,7 @@ function normalizeTitle(body) {
     description: cleanText(body.description, 5000),
     year: cleanNullableInt(body.year),
     genres: cleanText(body.genres, 300),
+    category: cleanText(body.category, 300),
     cover_url: cleanHttpUrl(body.cover_url, 2000),
     backdrop_url: cleanHttpUrl(body.backdrop_url, 2000),
     episode_image_url: cleanHttpUrl(body.episode_image_url, 2000),
@@ -884,7 +885,7 @@ async function listTitles({ publishedOnly = false, search = '' } = {}) {
   if (publishedOnly) items = items.filter(item => item.published !== false);
   if (search) {
     const needle = search.toLocaleLowerCase('pt-BR');
-    items = items.filter(item => [item.title, item.series_title, item.genres]
+    items = items.filter(item => [item.title, item.series_title, item.genres, item.category]
       .some(value => String(value || '').toLocaleLowerCase('pt-BR').includes(needle)));
   }
   return items.sort((a, b) => Number(b.featured) - Number(a.featured) || Number(b.id) - Number(a.id));
@@ -1071,6 +1072,7 @@ function buildRecordsFromOkru(entries, defaults = {}, collectionTitle = '') {
     description: cleanText(defaults.description, 5000),
     year: cleanNullableInt(defaults.year),
     genres: cleanText(defaults.genres, 300),
+    category: cleanText(defaults.category, 300),
     cover_url: cleanHttpUrl(defaults.cover_url, 2000),
     backdrop_url: cleanHttpUrl(defaults.backdrop_url, 2000),
     tmdb_id: cleanNullableInt(defaults.tmdb_id),
@@ -1185,6 +1187,7 @@ function parsePlaylist(content, defaults = {}) {
     description: cleanText(defaults.description, 5000),
     year: cleanNullableInt(defaults.year),
     genres: cleanText(defaults.genres, 300),
+    category: cleanText(defaults.category, 300),
     cover_url: cleanHttpUrl(defaults.cover_url, 2000),
     backdrop_url: cleanHttpUrl(defaults.backdrop_url, 2000),
     tmdb_id: cleanNullableInt(defaults.tmdb_id),
@@ -1213,7 +1216,8 @@ function parsePlaylist(content, defaults = {}) {
       content_type: contentType,
       season: contentType === 'episode' ? (episodeInfo?.season ?? defaultSeason) : null,
       episode: contentType === 'episode' ? episodeNumber : null,
-      genres: defaultRecord.genres || entry.group_title,
+      genres: defaultRecord.genres,
+      category: defaultRecord.category || entry.group_title,
       cover_url: defaultRecord.cover_url || entry.cover_url,
       source_url: entry.source_url,
       source_type: detectSourceType(entry.source_url),

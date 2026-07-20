@@ -105,6 +105,7 @@ function renderList() {
       item.series_title,
       item.content_type === 'episode' && item.season !== null ? `T${item.season}` : '',
       item.content_type === 'episode' && item.episode !== null ? `E${item.episode}` : '',
+      item.category,
       String(item.source_type || '').toUpperCase(),
       item.published ? 'Publicado' : 'Oculto'
     ].filter(Boolean).join(' • ');

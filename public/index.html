@@ -5,15 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260720-6">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260720-8">
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar catalog-topbar">
     <a class="brand" href="/">MINHA<span>STREAM</span></a>
+    <nav id="mainNav" class="main-nav" aria-label="Catálogo">
+      <a href="/" data-view="home">Início</a>
+      <a href="/?view=movies" data-view="movies">Filmes</a>
+      <a href="/?view=series" data-view="series">Séries</a>
+      <a href="/?view=categories" data-view="categories">Categorias</a>
+      <a href="/?view=genres" data-view="genres">Gêneros</a>
+      <a href="/?view=az" data-view="az">A–Z</a>
+    </nav>
     <nav class="top-actions">
       <label class="search-box">
         <span aria-hidden="true">⌕</span>
-        <input id="searchInput" type="search" placeholder="Buscar filmes e séries" autocomplete="off">
+        <input id="searchInput" type="search" placeholder="Buscar no catálogo" autocomplete="off">
       </label>
       <a class="ghost-button" href="/admin">Painel</a>
     </nav>
@@ -31,22 +39,23 @@
     </section>
 
     <section class="content-section">
-      <div class="section-heading">
+      <div class="section-heading catalog-heading">
         <div>
-          <p class="eyebrow">CATÁLOGO</p>
-          <h2>Filmes e séries</h2>
+          <p id="pageEyebrow" class="eyebrow">CATÁLOGO</p>
+          <h2 id="pageTitle">Filmes e séries</h2>
         </div>
         <span id="resultCount" class="muted"></span>
       </div>
-      <div id="catalogGrid" class="catalog-grid" aria-live="polite"></div>
+      <div id="filterBar" class="filter-bar hidden" aria-label="Filtros"></div>
+      <div id="catalogContent" class="catalog-content" aria-live="polite"></div>
       <div id="emptyState" class="empty-state hidden">
         <strong>Nenhum conteúdo encontrado.</strong>
-        <span>Cadastre um vídeo no painel administrativo.</span>
+        <span>Cadastre um filme ou episódio no painel administrativo.</span>
       </div>
     </section>
   </main>
 
   <footer>Use apenas vídeos próprios ou autorizados. Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB.</footer>
-  <script src="/assets/app.js?v=20260720-6" defer></script>
+  <script src="/assets/app.js?v=20260720-8" defer></script>
 </body>
 </html>

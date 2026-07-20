@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Painel | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260720-7">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260720-8">
 </head>
 <body>
   <header class="topbar">
@@ -36,7 +36,7 @@
           <div>
             <p class="eyebrow">CADASTRO</p>
             <h1 id="formHeading">Adicionar conteúdo</h1>
-            <span id="importerBuildBadge" class="build-badge">IMPORTADOR OK.RU V7</span>
+            <span id="importerBuildBadge" class="build-badge">IMPORTADOR OK.RU V8</span>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
@@ -99,6 +99,11 @@
               <input name="year" type="number" min="1888" max="2200" placeholder="Opcional">
             </label>
           </div>
+
+          <label>Categoria
+            <input name="category" maxlength="180" placeholder="Ex.: Infantil, Anime, Novela, Documentário">
+          </label>
+          <p class="source-help">A categoria aparece na área “Categorias”. Você pode usar mais de uma separando por vírgula.</p>
 
           <div id="seriesFields" class="series-fields hidden">
             <label>Nome da série *
@@ -184,6 +189,6 @@
     </section>
   </main>
 
-  <script src="/assets/admin.js?v=20260720-7" defer></script>
+  <script src="/assets/admin.js?v=20260720-8" defer></script>
 </body>
 </html>

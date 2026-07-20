@@ -1,0 +1,23 @@
+ATUALIZAÇÃO V8 — FILMES, SÉRIES, CATEGORIAS, GÊNEROS E A–Z
+
+O site agora possui no menu:
+- Início
+- Filmes
+- Séries
+- Categorias
+- Gêneros
+- A–Z
+
+No painel foi adicionado o campo “Categoria”.
+Exemplos: Infantil, Anime, Novela, Documentário, Nacional.
+Você pode usar mais de uma categoria separando por vírgula.
+
+Os gêneros continuam sendo preenchidos automaticamente pelo TMDB e também podem ser editados no painel.
+
+COMO ATUALIZAR
+1. Envie todos os arquivos do ZIP para a raiz do repositório no GitHub, substituindo os antigos.
+2. No Render, abra Manual Deploy.
+3. Clique em Clear build cache & deploy.
+4. Quando o deploy ficar Live, abra o site com ?v=8 no final uma vez.
+
+Os filmes e episódios já cadastrados continuam funcionando. Os antigos aparecerão em “Sem categoria” até você editar e escolher uma categoria.
