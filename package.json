@@ -1,13 +1,13 @@
 {
   "name": "minha-stream-simples",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "private": true,
-  "description": "Site de streaming simples com painel e catálogo salvo automaticamente no GitHub.",
+  "description": "Site de streaming simples com TMDB, playlists, séries e catálogo salvo automaticamente no GitHub.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check public/assets/app.js && node --check public/assets/watch.js && node --check public/assets/admin.js"
+    "check": "node --check server.js && node --check public/assets/app.js && node --check public/assets/watch.js && node --check public/assets/admin.js && node --check public/assets/series.js"
   },
   "engines": {
     "node": "20.x"

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b10">
+  <title>Série | Minha Stream</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">MINHA<span>STREAM</span></a>
+    <div class="top-actions">
+      <a class="ghost-button" href="/">← Catálogo</a>
+    </div>
+  </header>
+
+  <main id="seriesPage" class="series-main">
+    <section id="seriesHero" class="series-hero">
+      <div class="series-hero-shade"></div>
+      <div class="series-info">
+        <div id="seriesPoster" class="series-poster"></div>
+        <div>
+          <p class="eyebrow">SÉRIE</p>
+          <h1 id="seriesTitle">Carregando…</h1>
+          <p id="seriesMeta" class="watch-meta"></p>
+          <p id="seriesDescription" class="watch-description"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="episodes-section">
+      <div class="section-heading compact">
+        <div>
+          <p class="eyebrow">TEMPORADAS</p>
+          <h2>Escolha uma temporada e um episódio</h2>
+        </div>
+      </div>
+      <div id="seasonTabs" class="season-tabs"></div>
+      <div id="episodeGrid" class="episode-grid"></div>
+      <div id="seriesError" class="error-box hidden"></div>
+    </section>
+  </main>
+
+  <script src="/assets/series.js" defer></script>
+</body>
+</html>

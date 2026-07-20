@@ -11,6 +11,7 @@
   <header class="topbar">
     <a class="brand" href="/">MINHA<span>STREAM</span></a>
     <div class="top-actions">
+      <a id="seriesBackButton" class="ghost-button hidden" href="#">Temporadas</a>
       <a class="ghost-button" href="/">← Catálogo</a>
     </div>
   </header>
@@ -30,6 +31,17 @@
         <p id="watchDescription" class="watch-description"></p>
       </div>
       <button id="favoriteButton" class="ghost-button" type="button">♡ Favoritar</button>
+    </section>
+
+    <section id="relatedEpisodes" class="watch-episodes hidden">
+      <div class="section-heading compact">
+        <div>
+          <p class="eyebrow">SÉRIE</p>
+          <h2>Temporadas e episódios</h2>
+        </div>
+        <select id="watchSeasonSelect" class="season-select" aria-label="Temporada"></select>
+      </div>
+      <div id="watchEpisodeList" class="watch-episode-list"></div>
     </section>
 
     <div id="watchError" class="error-box hidden"></div>

@@ -1,138 +1,79 @@
-# Minha Stream Simples
+# Minha Stream — TMDB, playlists e séries
 
-Site de catálogo e reprodução com painel administrativo. Não usa PostgreSQL e você não precisa editar `catalog.json` manualmente.
+Esta versão continua sem PostgreSQL. O catálogo é salvo automaticamente no GitHub pelo painel.
 
-## Como funciona
+## O que foi adicionado
 
-1. O código fica no GitHub.
-2. O site roda no Render.
-3. Você entra em `/admin`, cola o título, a capa e o link do vídeo.
-4. Ao clicar em **Salvar**, o site grava o catálogo automaticamente em um ramo chamado `catalogo` no seu repositório.
+- busca no TMDB para preencher capa, imagem de fundo, descrição, ano e gêneros;
+- importação de arquivos `.m3u`, `.m3u8` e `.txt` pelo painel;
+- séries agrupadas em uma única capa no catálogo;
+- página de série com escolha de temporada e episódio;
+- lista de temporadas e episódios também abaixo do player;
+- OK.ru, Google Drive, HLS/M3U8, vídeo direto e sites que aceitam incorporação por iframe.
 
-O ramo `catalogo` é criado automaticamente. Ele fica separado do ramo principal, por isso adicionar vídeos não precisa provocar um novo deploy do site.
+## Atualizar o site que já está no Render
 
-## Fontes aceitas
-
-- OK.ru: link normal ou link `videoembed`.
-- Google Drive: link de compartilhamento.
-- Servidor do PC: link público terminando em `.mp4` ou outro formato aceito pelo navegador.
-- HLS: link `.m3u8`.
-
-O painel identifica o tipo do link automaticamente.
-
-# Instalação simples
-
-## 1. Enviar para o GitHub
-
-Crie um repositório vazio no GitHub e envie todos os arquivos desta pasta para ele.
-
-## 2. Criar o token do GitHub
-
-Crie um token de acesso para o mesmo repositório. Pode ser um token de acesso refinado/fine-grained. Dê acesso somente ao repositório do site e permissão de **leitura e gravação do conteúdo**.
-
-Copie o token quando ele for mostrado. O nome exato das telas pode variar no GitHub.
-
-## 3. Criar o site no Render
-
-Crie um **Web Service** no Render usando o repositório do GitHub.
-
-Use:
+1. Envie todos os arquivos desta pasta para o mesmo repositório do GitHub e confirme a substituição dos arquivos antigos.
+2. No Render, abra o seu Web Service.
+3. Entre em **Environment**.
+4. Adicione:
 
 ```text
-Build Command: npm install
-Start Command: npm start
+TMDB_API_KEY = sua chave API do TMDB
 ```
 
-Adicione estas três variáveis:
+5. Salve. O Render fará um novo deploy. Caso não faça, use **Manual Deploy → Deploy latest commit**.
+
+As variáveis que você já configurou continuam iguais:
 
 ```text
-ADMIN_PASSWORD = a senha que você usará no painel
-GITHUB_TOKEN = o token criado no GitHub
-GITHUB_REPO = usuario/nome-do-repositorio
-```
-
-Exemplo de `GITHUB_REPO`:
-
-```text
-joao/minha-stream
-```
-
-Não coloque `https://github.com/`. Use apenas `usuario/repositorio`.
-
-Também deixe:
-
-```text
+ADMIN_PASSWORD = sua senha do painel
+GITHUB_TOKEN = seu token do GitHub
+GITHUB_REPO = usuario/repositorio
 NODE_ENV = production
 ```
 
-Depois faça o deploy.
+Não precisa de banco de dados.
 
-## 4. Adicionar vídeos
+## Adicionar capa pelo TMDB
 
-Abra:
+1. Abra `https://SEU-SITE.onrender.com/admin`.
+2. Entre com sua senha.
+3. Em **Buscar capa e dados no TMDB**, escreva o nome do filme ou série.
+4. Clique em **Buscar** e depois em **Usar** no resultado certo.
+5. Cole o link do vídeo e clique em **Salvar**.
 
-```text
-https://SEU-SITE.onrender.com/admin
-```
+Ao escolher uma série no TMDB, o formulário muda para episódio e preenche o nome da série. Informe temporada, episódio e o link do vídeo.
 
-Entre com a senha de `ADMIN_PASSWORD`, preencha:
+## Importar uma playlist
 
-- título;
-- link do vídeo;
-- link da capa, se tiver;
-- descrição, se quiser.
+1. No painel, preencha antes a capa e o nome da série, caso todos os links sejam da mesma série.
+2. Abra **Importar playlist M3U, M3U8 ou TXT**.
+3. Selecione o arquivo.
+4. Deixe marcada a opção para usar os dados do formulário.
+5. Clique em **Importar playlist**.
 
-Clique em **Salvar**. Não precisa abrir nem editar arquivo no GitHub.
-
-# Google Drive
-
-No Drive, deixe o arquivo acessível para qualquer pessoa com o link. Cole o link de compartilhamento no painel.
-
-O Google Drive pode limitar reprodução quando há muitas visualizações. Ele é mais indicado para uso pessoal ou poucos usuários.
-
-# OK.ru
-
-Cole um link parecido com:
+O importador reconhece nomes como:
 
 ```text
-https://ok.ru/video/1234567890
+Minha Série S01E01 - Piloto
+Minha Série 1x02 - Segundo episódio
 ```
 
-ou:
+Quando você preenche o nome da série no formulário e a playlist não contém números, os itens são importados na ordem como Temporada 1, Episódios 1, 2, 3 e assim por diante.
 
-```text
-https://ok.ru/videoembed/1234567890
-```
+Arquivos HLS que contêm apenas os segmentos de um único vídeo não são importados como catálogo. Nesse caso, cadastre o link `.m3u8` diretamente no campo **Link do vídeo**.
 
-# Vídeos do seu PC
+## Links e sites aceitos
 
-O site no Render não consegue abrir caminhos como `C:\Filmes\filme.mp4`. Você precisa executar o servidor da pasta `pc-video-server` e publicar o endereço com HTTPS.
+- OK.ru;
+- Google Drive;
+- link direto MP4/WebM e servidor do PC;
+- HLS `.m3u8`;
+- página ou player de outro site usando **Site incorporado / iframe**.
 
-Veja `pc-video-server/README-PC.md`.
+Não existe suporte literal a qualquer site. Alguns sites bloqueiam iframe com `X-Frame-Options` ou `Content-Security-Policy`; nesse caso, o navegador impede a exibição e o site precisa fornecer um link oficial de incorporação. HLS também precisa permitir CORS. O projeto não remove DRM nem contorna bloqueios.
 
-O PC precisa ficar ligado durante a reprodução.
+Use somente conteúdo próprio ou que você tenha autorização para exibir.
 
-# Teste no computador
-
-Sem configurar GitHub, o projeto usa `data/catalog.json` apenas para teste local.
-
-```bash
-npm install
-npm start
-```
-
-Abra:
-
-```text
-http://localhost:10000
-http://localhost:10000/admin
-```
-
-No uso real no Render, configure `GITHUB_TOKEN` e `GITHUB_REPO` para o catálogo permanecer salvo.
-
-# Segurança
-
-- Nunca coloque o token dentro de arquivos enviados ao GitHub.
-- Coloque o token somente nas variáveis do Render.
-- Use uma senha forte em `ADMIN_PASSWORD`.
-- Use apenas vídeos que você tenha autorização para disponibilizar.
+Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB.

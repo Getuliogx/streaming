@@ -1,0 +1,5 @@
+#EXTM3U
+#EXTINF:-1 tvg-logo="https://exemplo.com/capa.jpg",Minha Série S01E01 - Piloto
+https://exemplo.com/videos/s01e01.mp4
+#EXTINF:-1 tvg-logo="https://exemplo.com/capa.jpg",Minha Série S01E02 - Segundo episódio
+https://exemplo.com/videos/s01e02.mp4

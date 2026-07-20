@@ -7,10 +7,21 @@ const watchMeta = document.querySelector('#watchMeta');
 const watchDescription = document.querySelector('#watchDescription');
 const watchError = document.querySelector('#watchError');
 const favoriteButton = document.querySelector('#favoriteButton');
+const relatedEpisodes = document.querySelector('#relatedEpisodes');
+const watchSeasonSelect = document.querySelector('#watchSeasonSelect');
+const watchEpisodeList = document.querySelector('#watchEpisodeList');
+const seriesBackButton = document.querySelector('#seriesBackButton');
 
 const params = new URLSearchParams(location.search);
 const id = Number(params.get('id'));
 let currentItem = null;
+let seriesEpisodes = [];
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
+}
 
 function extractDriveId(value) {
   const text = String(value || '').trim();
@@ -34,19 +45,19 @@ function buildIframe(src, title) {
   playerMount.replaceChildren(iframe);
 }
 
-function buildVideo(src, isHls = false) {
+function buildVideo(src, isHls = false, poster = '') {
   const video = document.createElement('video');
   video.controls = true;
   video.playsInline = true;
   video.preload = 'metadata';
-  video.crossOrigin = 'anonymous';
+  if (poster) video.poster = poster;
 
   if (isHls && window.Hls && window.Hls.isSupported()) {
     const hls = new window.Hls({ enableWorker: true });
     hls.loadSource(src);
     hls.attachMedia(video);
     hls.on(window.Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) showError('Não foi possível carregar o vídeo HLS.');
+      if (data.fatal) showError('Não foi possível carregar o vídeo HLS. O servidor do vídeo precisa permitir CORS.');
     });
   } else {
     video.src = src;
@@ -64,10 +75,14 @@ function mountPlayer(item) {
     return;
   }
   if (item.source_type === 'hls') {
-    buildVideo(item.source_url, true);
+    buildVideo(item.source_url, true, item.backdrop_url || item.cover_url || '');
     return;
   }
-  buildVideo(item.source_url, false);
+  if (item.source_type === 'iframe') {
+    buildIframe(item.source_url, item.title);
+    return;
+  }
+  buildVideo(item.source_url, false, item.backdrop_url || item.cover_url || '');
 }
 
 function showError(message) {
@@ -93,12 +108,50 @@ function addToHistory(item) {
   localStorage.setItem('streamHistory', JSON.stringify(history.slice(0, 50)));
 }
 
+function seasonLabel(value) {
+  if (value === null || value === undefined) return 'Sem temporada';
+  if (Number(value) === 0) return 'Especiais';
+  return `Temporada ${value}`;
+}
+
+function renderWatchEpisodes(seasonValue) {
+  const season = seasonValue === 'null' ? null : Number(seasonValue);
+  const filtered = seriesEpisodes.filter(item => (item.season ?? null) === season);
+  watchEpisodeList.innerHTML = filtered.map(item => `
+    <a class="watch-episode-link ${Number(item.id) === id ? 'active' : ''}" href="/watch.html?id=${item.id}">
+      <span>${item.episode !== null && item.episode !== undefined ? `E${item.episode}` : 'EP'}</span>
+      <strong>${escapeHtml(item.title)}</strong>
+    </a>`).join('');
+}
+
+async function loadRelatedEpisodes(seriesTitle) {
+  try {
+    const response = await fetch(`/api/series?title=${encodeURIComponent(seriesTitle)}`);
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Não foi possível carregar os episódios.');
+    seriesEpisodes = body.episodes || [];
+    const seasons = [...new Set(seriesEpisodes.map(item => item.season ?? null))]
+      .sort((a, b) => (a ?? -1) - (b ?? -1));
+    const currentSeason = currentItem.season ?? null;
+    watchSeasonSelect.innerHTML = seasons.map(season => `
+      <option value="${season === null ? 'null' : season}" ${season === currentSeason ? 'selected' : ''}>${escapeHtml(seasonLabel(season))}</option>`).join('');
+    renderWatchEpisodes(currentSeason === null ? 'null' : String(currentSeason));
+    relatedEpisodes.classList.remove('hidden');
+    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${currentSeason ?? ''}`;
+    seriesBackButton.classList.remove('hidden');
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 favoriteButton.addEventListener('click', () => {
   const favorites = getFavorites();
   const next = favorites.includes(id) ? favorites.filter(itemId => itemId !== id) : [id, ...favorites];
   localStorage.setItem('streamFavorites', JSON.stringify(next));
   updateFavoriteButton();
 });
+
+watchSeasonSelect.addEventListener('change', () => renderWatchEpisodes(watchSeasonSelect.value));
 
 async function loadItem() {
   if (!Number.isInteger(id) || id < 1) {
@@ -115,14 +168,15 @@ async function loadItem() {
     watchEyebrow.textContent = body.series_title || (body.content_type === 'episode' ? 'EPISÓDIO' : 'FILME / VÍDEO');
     const meta = [];
     if (body.year) meta.push(body.year);
-    if (body.season !== null) meta.push(`Temporada ${body.season}`);
-    if (body.episode !== null) meta.push(`Episódio ${body.episode}`);
+    if (body.season !== null && body.season !== undefined) meta.push(`Temporada ${body.season}`);
+    if (body.episode !== null && body.episode !== undefined) meta.push(`Episódio ${body.episode}`);
     if (body.genres) meta.push(body.genres);
     watchMeta.textContent = meta.join(' • ');
     watchDescription.textContent = body.description || 'Sem descrição.';
     mountPlayer(body);
     addToHistory(body);
     updateFavoriteButton();
+    if (body.content_type === 'episode' && body.series_title) await loadRelatedEpisodes(body.series_title);
   } catch (error) {
     playerMount.innerHTML = '';
     watchTitle.textContent = 'Não foi possível abrir';

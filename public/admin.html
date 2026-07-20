@@ -35,36 +35,45 @@
         <div class="section-heading compact">
           <div>
             <p class="eyebrow">CADASTRO</p>
-            <h1 id="formHeading">Adicionar vídeo</h1>
+            <h1 id="formHeading">Adicionar conteúdo</h1>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
 
+        <section class="tmdb-box">
+          <div class="mini-heading">
+            <div>
+              <strong>Buscar capa e dados no TMDB</strong>
+              <span id="tmdbStatus" class="muted"></span>
+            </div>
+          </div>
+          <form id="tmdbSearchForm" class="inline-form">
+            <input id="tmdbQuery" type="search" placeholder="Digite o nome do filme ou série" autocomplete="off">
+            <select id="tmdbType" aria-label="Tipo da busca">
+              <option value="multi">Filme ou série</option>
+              <option value="movie">Somente filmes</option>
+              <option value="tv">Somente séries</option>
+            </select>
+            <button class="ghost-button" type="submit">Buscar</button>
+          </form>
+          <p id="tmdbMessage" class="form-message"></p>
+          <div id="tmdbResults" class="tmdb-results"></div>
+        </section>
+
         <form id="titleForm" class="stack-form">
           <input name="id" type="hidden">
+          <input name="tmdb_id" type="hidden">
+          <input name="tmdb_type" type="hidden">
 
           <label>Título do filme ou episódio *
-            <input name="title" maxlength="180" required placeholder="Ex.: Filme 1">
-          </label>
-
-          <label>Link do vídeo *
-            <input name="source_url" required placeholder="Cole o link do OK.ru, Drive ou servidor do PC">
-          </label>
-          <p class="source-help">O site identifica automaticamente o tipo do link.</p>
-
-          <label>Link da capa
-            <input name="cover_url" type="url" placeholder="https://.../capa.jpg">
-          </label>
-
-          <label>Descrição
-            <textarea name="description" rows="3" placeholder="Opcional"></textarea>
+            <input name="title" maxlength="180" required placeholder="Ex.: Piloto">
           </label>
 
           <div class="field-grid two">
             <label>Tipo
-              <select name="content_type">
+              <select name="content_type" id="contentTypeSelect">
                 <option value="movie">Filme ou vídeo</option>
-                <option value="episode">Episódio</option>
+                <option value="episode">Episódio de série</option>
               </select>
             </label>
             <label>Ano
@@ -72,20 +81,47 @@
             </label>
           </div>
 
-          <details>
-            <summary>Opções de série e destaque</summary>
-            <div class="stack-form details-fields">
-              <label>Nome da série
-                <input name="series_title" maxlength="180" placeholder="Opcional">
+          <div id="seriesFields" class="series-fields hidden">
+            <label>Nome da série *
+              <input name="series_title" maxlength="180" placeholder="Ex.: Minha Série">
+            </label>
+            <div class="field-grid two">
+              <label>Temporada
+                <input name="season" type="number" min="0" placeholder="1">
               </label>
-              <div class="field-grid two">
-                <label>Temporada
-                  <input name="season" type="number" min="0">
-                </label>
-                <label>Episódio
-                  <input name="episode" type="number" min="0">
-                </label>
-              </div>
+              <label>Episódio
+                <input name="episode" type="number" min="0" placeholder="1">
+              </label>
+            </div>
+          </div>
+
+          <label>Link do vídeo ou do site *
+            <input name="source_url" required placeholder="OK.ru, Drive, MP4, M3U8 ou link de incorporação">
+          </label>
+
+          <label>Como abrir o link
+            <select name="source_type">
+              <option value="auto">Detectar automaticamente</option>
+              <option value="okru">OK.ru</option>
+              <option value="gdrive">Google Drive</option>
+              <option value="hls">HLS / M3U8</option>
+              <option value="direct">Vídeo direto / servidor do PC</option>
+              <option value="iframe">Site incorporado / iframe</option>
+            </select>
+          </label>
+          <p class="source-help">Sites comuns só abrem quando permitem incorporação. O sistema não remove DRM nem bloqueios do site.</p>
+
+          <label>Link da capa
+            <input name="cover_url" type="url" placeholder="https://.../capa.jpg">
+          </label>
+
+          <label>Descrição
+            <textarea name="description" rows="4" placeholder="Opcional"></textarea>
+          </label>
+
+          <details>
+            <summary>Mais opções</summary>
+            <div class="stack-form details-fields">
               <label>Gêneros
                 <input name="genres" placeholder="Ex.: Ação, Drama">
               </label>
@@ -102,13 +138,26 @@
           <button class="primary-button" type="submit">Salvar</button>
           <p id="formMessage" class="form-message"></p>
         </form>
+
+        <details class="playlist-box">
+          <summary>Importar playlist M3U, M3U8 ou TXT</summary>
+          <div class="stack-form details-fields">
+            <p class="source-help">Escolha um arquivo de lista. As capas e o nome da série preenchidos acima podem ser aplicados em todos os itens importados.</p>
+            <label>Arquivo da playlist
+              <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
+            </label>
+            <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar capa, descrição, série e dados atuais do formulário</label>
+            <button id="importPlaylistButton" class="ghost-button" type="button">Importar playlist</button>
+            <p id="playlistMessage" class="form-message"></p>
+          </div>
+        </details>
       </aside>
 
       <section class="list-card">
         <div class="section-heading compact">
           <div>
             <p class="eyebrow">CATÁLOGO</p>
-            <h2>Vídeos adicionados</h2>
+            <h2>Conteúdos adicionados</h2>
           </div>
           <span id="databaseBadge" class="status-badge"></span>
         </div>

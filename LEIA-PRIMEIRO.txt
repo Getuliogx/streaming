@@ -1,25 +1,14 @@
-COMO INSTALAR SEM BANCO DE DADOS
+PARA ATUALIZAR O SITE QUE VOCÊ JÁ CRIOU
 
-1. Envie todos estes arquivos para um repositório do GitHub.
+1. Envie todos estes arquivos para o mesmo repositório do GitHub, substituindo os antigos.
 
-2. Crie um token do GitHub para esse repositório com permissão de leitura e gravação de conteúdo.
+2. No Render, abra Environment e adicione:
+TMDB_API_KEY = sua chave do TMDB
 
-3. No Render, crie um Web Service e coloque somente:
+3. Salve e aguarde o novo deploy.
 
-ADMIN_PASSWORD = sua senha
-GITHUB_TOKEN = seu token
-GITHUB_REPO = usuario/repositorio
-NODE_ENV = production
+4. Entre em /admin.
 
-Build Command: npm install
-Start Command: npm start
-
-4. Depois do deploy, abra:
-https://seu-site.onrender.com/admin
-
-Digite a senha, cole o título e o link do vídeo e clique em SALVAR.
-
-PRONTO.
 Não tem PostgreSQL.
-Não precisa editar arquivo do GitHub.
-O painel salva tudo automaticamente.
+Não precisa editar catalog.json.
+O painel continua salvando sozinho no GitHub.

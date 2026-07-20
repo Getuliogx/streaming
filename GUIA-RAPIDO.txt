@@ -1,40 +1,27 @@
-MINHA STREAM SIMPLES — GUIA RÁPIDO
+MINHA STREAM — ATUALIZAÇÃO RÁPIDA
 
-NÃO TEM POSTGRESQL.
-NÃO PRECISA EDITAR catalog.json.
+1. Envie estes arquivos por cima dos arquivos antigos no GitHub.
 
-1) Envie esta pasta para um repositório do GitHub.
+2. No Render, adicione em Environment:
+TMDB_API_KEY = sua chave API do TMDB
 
-2) Crie um token do GitHub com acesso somente a esse repositório e permissão para ler e gravar conteúdo.
-
-3) No Render, crie um Web Service ligado ao repositório.
-
-Build Command:
-npm ci
-
-Start Command:
-npm start
-
-4) No Render, adicione:
-
-ADMIN_PASSWORD = sua senha do painel
-GITHUB_TOKEN = seu token do GitHub
+3. Confirme que continuam configurados:
+ADMIN_PASSWORD = sua senha
+GITHUB_TOKEN = seu token
 GITHUB_REPO = usuario/repositorio
 NODE_ENV = production
 
-5) Abra:
+4. Aguarde o deploy.
+
+5. Abra:
 https://seu-site.onrender.com/admin
 
-6) Digite a senha, cole o título, o link do vídeo e a capa. Clique em SALVAR.
+AGORA O PAINEL TEM:
+- busca de capas e dados no TMDB;
+- upload de playlist M3U/M3U8/TXT;
+- filmes;
+- séries com temporadas e episódios;
+- OK.ru, Google Drive, HLS, vídeo direto e iframe.
 
-O painel salva sozinho no GitHub em um ramo separado chamado "catalogo".
-Você não precisa abrir nem editar arquivos.
-
-LINKS ACEITOS:
-- OK.ru
-- Google Drive
-- link direto MP4 do servidor do seu PC
-- HLS/M3U8
-
-IMPORTANTE:
-O token fica somente nas variáveis do Render. Nunca coloque o token dentro dos arquivos do projeto.
+OBSERVAÇÃO:
+Um site externo só abre dentro do player quando ele permite iframe. O sistema não remove DRM nem bloqueios de incorporação.
