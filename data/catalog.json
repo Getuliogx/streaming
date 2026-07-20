@@ -29,14 +29,14 @@
     "backdrop_url": "https://image.tmdb.org/t/p/original/fypGcrQCyb9vQ7L8AM6PHCjQSBC.jpg",
     "content_type": "episode",
     "season": 1,
-    "episode": null,
+    "episode": 1,
     "source_type": "okru",
-    "source_url": "https://ok.ru/video/c23729458",
+    "source_url": "https://ok.ru/video/11353235851826",
     "tmdb_id": 3854,
     "tmdb_type": "tv",
     "featured": false,
     "published": true,
     "created_at": "2026-07-20T11:31:11.470Z",
-    "updated_at": "2026-07-20T11:31:11.470Z"
+    "updated_at": "2026-07-20T11:34:59.478Z"
   }
 ]
