@@ -526,5 +526,27 @@
     "published": true,
     "created_at": "2026-07-20T12:54:01.370Z",
     "updated_at": "2026-07-20T12:54:01.370Z"
+  },
+  {
+    "id": 25,
+    "title": "Convite Maldito",
+    "series_title": "",
+    "description": "Após a morte de sua mãe e sem ter nenhum outro parente conhecido, Evie faz um teste de DNA… e descobre um primo perdido que ela não sabia que existia. Convidada pela sua nova família para um casamento, ela sente uma grande atração pelo sexy anfitrião. Mas Evie logo terá que lutar pela sobrevivência ao descobrir os segredos sinistros da história de sua família e as intenções perturbadoras por trás de sua generosidade pecaminosa.",
+    "year": 2022,
+    "genres": "Terror, Thriller",
+    "cover_url": "https://image.tmdb.org/t/p/w500/2JdYO1vmuDcqVgZD3nPEpdX7GvI.jpg",
+    "backdrop_url": "https://image.tmdb.org/t/p/original/wqlwSAATTZTYA60OSeTKsj4ChZh.jpg",
+    "episode_image_url": "",
+    "content_type": "movie",
+    "season": null,
+    "episode": null,
+    "source_type": "gdrive",
+    "source_url": "https://drive.google.com/file/d/1FBWEnwelqhFT---8RxQDnoOmdPDhurAC/view?usp=sharing",
+    "tmdb_id": 830788,
+    "tmdb_type": "movie",
+    "featured": false,
+    "published": true,
+    "created_at": "2026-07-20T12:57:16.123Z",
+    "updated_at": "2026-07-20T12:57:16.123Z"
   }
 ]
