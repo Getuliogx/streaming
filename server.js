@@ -30,7 +30,7 @@ const MAX_PLAYLIST_ITEMS = 1500;
 const MAX_OKRU_PAGES = 90;
 const MAX_OKRU_ITEMS = 1500;
 const OKRU_TIMEOUT_MS = 25_000;
-const OKRU_IMPORT_VERSION = '6.0.0';
+const OKRU_IMPORT_VERSION = '7.0.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -328,10 +328,56 @@ function extractOkruPageTitle(html) {
   return cleanOkruTitle(title);
 }
 
+function hasEpisodeMarker(value) {
+  const text = cleanOkruTitle(value);
+  return /\bS(?:EASON)?\s*0*\d{1,3}\s*[._ -]*E(?:P(?:ISODE|IS[ÓO]DIO)?)?\s*0*\d{1,4}\b/i.test(text)
+    || /\b0*\d{1,3}\s*x\s*0*\d{1,4}\b/i.test(text)
+    || /\bT(?:EMPORADA)?\s*0*\d{1,3}\s*[._ -]*(?:E|EP|EPIS[ÓO]DIO)\s*0*\d{1,4}\b/i.test(text)
+    || /\b(?:EP|EP\.|EPIS[ÓO]DIO|CAP[ÍI]TULO)\s*0*\d{1,4}\b/i.test(text);
+}
+
 function isGenericVideoTitle(title, id = '') {
   const value = cleanOkruTitle(title).toLocaleLowerCase('pt-BR');
   if (!value) return true;
-  return value === String(id) || /^(?:vídeo|video|assistir|ok\.ru)(?:\s+\d+)?$/i.test(value);
+  if (value === String(id)) return true;
+
+  const uiOnly = /^(?:view|views?|watch|play|preview|open|more|ver|assistir|reproduzir|abrir|abrir vídeo|abrir video|vídeo|video|ok\.ru|thumbnail|poster|imagem|image|foto|photo|detalhes?)(?:\s+\d+)?$/i;
+  if (uiOnly.test(value)) return true;
+
+  if (/^\d{1,3}:\d{2}(?::\d{2})?$/.test(value)) return true;
+  if (/^\d[\d.,\s]*\s*(?:views?|visualiza(?:ç|c)(?:ão|oes|ões)|просмотр(?:ов|а)?)$/i.test(value)) return true;
+  if (/^(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|янв|фев|мар|апр|май|июн|июл|авг|сен|окт|ноя|дек)[a-zа-я]*\.?\s+\d{2,4}$/i.test(value)) return true;
+  return false;
+}
+
+function scoreOkruTitleCandidate(value, id = '') {
+  const title = cleanOkruTitle(value);
+  if (!title || isGenericVideoTitle(title, id)) return -1000;
+
+  let score = 0;
+  if (hasEpisodeMarker(title)) score += 120;
+  if (/\b(?:temporada|epis[óo]dio|episode|season)\b/i.test(title)) score += 30;
+  if (/[A-Za-zÀ-ÿА-Яа-я]/.test(title)) score += 15;
+  if (title.length >= 8 && title.length <= 180) score += 15;
+  if (title.length > 180) score -= 40;
+  if (/https?:\/\//i.test(title)) score -= 80;
+  if (/\b(?:views?|visualiza(?:ç|c)(?:ão|oes|ões))\b/i.test(title)) score -= 25;
+  if (/^(?:sem título|untitled)$/i.test(title)) score -= 80;
+  return score;
+}
+
+function chooseBestOkruTitle(candidates, id = '') {
+  let best = '';
+  let bestScore = -1000;
+  for (const candidate of candidates || []) {
+    const cleaned = cleanOkruTitle(candidate);
+    const score = scoreOkruTitleCandidate(cleaned, id);
+    if (score > bestScore || (score === bestScore && cleaned.length > best.length)) {
+      best = cleaned;
+      bestScore = score;
+    }
+  }
+  return bestScore > -1000 ? best : '';
 }
 
 function extractExpectedVideoCount(html) {
@@ -351,25 +397,63 @@ function extractExpectedVideoCount(html) {
   return candidates.length ? Math.max(...candidates) : null;
 }
 
-function extractNearbyOkruTitle(source, index, id) {
-  const before = source.slice(Math.max(0, index - 1200), index);
-  const after = source.slice(index, Math.min(source.length, index + 2200));
-  const area = `${before}${after}`;
-  const attribute = area.match(/(?:data-title|aria-label|title)\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
-  const json = area.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i);
-  const visiblePatterns = [
-    /class\s*=\s*(?:"[^"]*(?:video-card_n|video-card_name|video-title|card-title)[^"]*"|'[^']*(?:video-card_n|video-card_name|video-title|card-title)[^']*')[^>]*>([\s\S]{1,400}?)<\//i,
-    /<a\b[^>]*href\s*=\s*(?:"|')[^"']*\/video\/\d+[^"']*(?:"|')[^>]*>([\s\S]{1,500}?)<\/a>/i,
-    /<h[1-6]\b[^>]*>([\s\S]{1,400}?)<\/h[1-6]>/i
-  ];
-  let visible = '';
-  for (const pattern of visiblePatterns) {
-    const found = after.match(pattern) || before.match(pattern);
-    if (found?.[1]) { visible = stripHtml(found[1]); break; }
+function extractOkruCardArea(source, index) {
+  const html = String(source || '');
+  const divPattern = /<div\b([^>]*)>/gi;
+  let match;
+  let cardStart = -1;
+
+  while ((match = divPattern.exec(html))) {
+    if (match.index > index) break;
+    const classes = extractTagAttribute(match[1], 'class').split(/\s+/).filter(Boolean);
+    if (classes.includes('video-card')) cardStart = match.index;
   }
-  const value = attribute?.[1] || attribute?.[2] || json?.[1] || visible || '';
-  const cleaned = cleanOkruTitle(value);
-  return isGenericVideoTitle(cleaned, id) ? '' : cleaned;
+
+  if (cardStart < 0) return '';
+  divPattern.lastIndex = Math.max(cardStart + 1, index + 1);
+  let nextCard = -1;
+  while ((match = divPattern.exec(html))) {
+    const classes = extractTagAttribute(match[1], 'class').split(/\s+/).filter(Boolean);
+    if (classes.includes('video-card')) {
+      nextCard = match.index;
+      break;
+    }
+    if (match.index > cardStart + 12000) break;
+  }
+
+  const end = nextCard >= 0 ? nextCard : Math.min(html.length, cardStart + 12000);
+  return html.slice(cardStart, end);
+}
+
+function extractNearbyOkruTitle(source, index, id) {
+  const cardArea = extractOkruCardArea(source, index);
+  const before = source.slice(Math.max(0, index - 1000), index);
+  const after = source.slice(index, Math.min(source.length, index + 2200));
+  const area = cardArea || `${before}${after}`;
+  const candidates = [];
+
+  const attributePattern = /(?:data-title|aria-label|title)\s*=\s*(?:"([^"]+)"|'([^']+)')/gi;
+  let match;
+  while ((match = attributePattern.exec(area))) candidates.push(match[1] || match[2] || '');
+
+  const jsonPattern = /"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi;
+  while ((match = jsonPattern.exec(area))) candidates.push(match[1]);
+
+  const classPattern = /class\s*=\s*(?:"[^"]*(?:video-card_n|video-card_name|video-card_title|video-card_t|video-title|card-title|card_name|caption)[^"]*"|'[^']*(?:video-card_n|video-card_name|video-card_title|video-card_t|video-title|card-title|card_name|caption)[^']*')[^>]*>([\s\S]{1,600}?)<\//gi;
+  while ((match = classPattern.exec(area))) candidates.push(stripHtml(match[1]));
+
+  const textNodePattern = />([^<>]{1,320})</g;
+  while ((match = textNodePattern.exec(area))) {
+    const visible = decodeHtmlEntities(match[1]).replace(/\s+/g, ' ').trim();
+    if (visible && (hasEpisodeMarker(visible) || /\b(?:epis[óo]dio|episode|temporada|season)\b/i.test(visible))) {
+      candidates.push(visible);
+    }
+  }
+
+  const rawEpisodePattern = /([^<>"']{0,160}\bS(?:EASON)?\s*0*\d{1,3}\s*[._ -]*E(?:P(?:ISODE|IS[ÓO]DIO)?)?\s*0*\d{1,4}[^<>"']{0,220})/gi;
+  while ((match = rawEpisodePattern.exec(decodeHtmlEntities(area)))) candidates.push(match[1]);
+
+  return chooseBestOkruTitle(candidates, id);
 }
 
 function parseOkruListing(html, baseUrl) {
@@ -384,7 +468,9 @@ function parseOkruListing(html, baseUrl) {
     const numericId = String(id);
     const cleaned = cleanOkruTitle(title);
     const previous = videos.get(numericId) || { id: numericId, title: '', poster: '' };
-    if (!previous.title || isGenericVideoTitle(previous.title, numericId)) previous.title = cleaned || previous.title;
+    const previousScore = scoreOkruTitleCandidate(previous.title, numericId);
+    const newScore = scoreOkruTitleCandidate(cleaned, numericId);
+    if (!previous.title || newScore > previousScore) previous.title = cleaned || previous.title;
     if (!previous.poster && poster) previous.poster = cleanHttpUrl(decodeHtmlEntities(poster), 2000);
     videos.set(numericId, previous);
   }
@@ -414,11 +500,13 @@ function parseOkruListing(html, baseUrl) {
 
     const videoMatch = resolved.pathname.match(/^\/video(?:embed)?\/(\d{6,})(?:\/|$)/i);
     if (videoMatch) {
-      const title = extractTagAttribute(attrs, 'data-title')
-        || extractTagAttribute(attrs, 'aria-label')
-        || extractTagAttribute(attrs, 'title')
-        || stripHtml(anchor[2])
-        || extractNearbyOkruTitle(source, anchor.index, videoMatch[1]);
+      const title = chooseBestOkruTitle([
+        extractTagAttribute(attrs, 'data-title'),
+        extractTagAttribute(attrs, 'aria-label'),
+        extractTagAttribute(attrs, 'title'),
+        stripHtml(anchor[2]),
+        extractNearbyOkruTitle(source, anchor.index, videoMatch[1])
+      ], videoMatch[1]);
       const poster = extractTagAttribute(attrs, 'data-poster') || extractTagAttribute(attrs, 'data-image');
       addVideo(videoMatch[1], title, poster);
       continue;
@@ -482,13 +570,18 @@ async function enrichOkruVideoMetadata(entries) {
   const targets = entries.slice(0, MAX_OKRU_ITEMS);
   const enriched = await mapWithConcurrency(targets, 5, async entry => {
     const currentTitle = cleanOkruTitle(entry.title);
+    const currentScore = scoreOkruTitleCandidate(currentTitle, entry.id);
     const looksTruncated = /(?:\.\.\.|…)$/.test(currentTitle);
-    if (currentTitle && !looksTruncated && !isGenericVideoTitle(currentTitle, entry.id)) return entry;
+    const weakTitle = currentScore < 40 || !hasEpisodeMarker(currentTitle);
+
+    if (currentTitle && !looksTruncated && !weakTitle) return entry;
+
     const metadata = await fetchOkruVideoMetadata(entry.id);
     const metadataTitle = cleanOkruTitle(metadata.title);
+    const metadataScore = scoreOkruTitleCandidate(metadataTitle, entry.id);
     return {
       ...entry,
-      title: metadataTitle && !isGenericVideoTitle(metadataTitle, entry.id) ? metadataTitle : currentTitle,
+      title: metadataScore > currentScore ? metadataTitle : currentTitle,
       poster: entry.poster || metadata.poster || ''
     };
   });
@@ -500,11 +593,15 @@ function mergeOkruParsed(parsed, videos) {
   for (const [id, value] of parsed.videos) {
     const old = videos.get(id);
     if (!old) videos.set(id, value);
-    else videos.set(id, {
-      ...old,
-      title: (!old.title || isGenericVideoTitle(old.title, id)) ? (value.title || old.title) : old.title,
-      poster: old.poster || value.poster || ''
-    });
+    else {
+      const oldScore = scoreOkruTitleCandidate(old.title, id);
+      const newScore = scoreOkruTitleCandidate(value.title, id);
+      videos.set(id, {
+        ...old,
+        title: newScore > oldScore ? (value.title || old.title) : old.title,
+        poster: old.poster || value.poster || ''
+      });
+    }
   }
 }
 
@@ -1392,6 +1489,8 @@ module.exports = {
   parsePlaylist,
   extractOkruPageTitle,
   extractExpectedVideoCount,
+  isGenericVideoTitle,
+  chooseBestOkruTitle,
   readOkruCollection,
   enrichEpisodeRecordsWithTmdb
 };

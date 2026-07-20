@@ -1,0 +1,9 @@
+ATUALIZAÇÃO V7 — CORREÇÃO DO TÍTULO “view”
+
+1. Envie server.js, package.json, package-lock.json e public/admin.html para a raiz do repositório.
+2. No Render, use Manual Deploy > Clear build cache & deploy.
+3. Abra /admin e confirme: IMPORTADOR OK.RU V7.0.0.
+4. Selecione a série no TMDB e importe novamente o mesmo link da playlist.
+
+A nova importação atualiza os episódios já existentes pelo link do vídeo, sem criar cópias.
+O importador ignora textos de botão como “view”, “play” e contagens de visualizações, e lê o título real do cartão.
