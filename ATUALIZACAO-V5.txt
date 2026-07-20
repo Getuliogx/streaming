@@ -1,0 +1,27 @@
+ATUALIZAÇÃO V5 — PLAYLIST OK.RU E EPISÓDIOS VISUAIS
+
+O que mudou:
+- Campo de link da playlist do OK.ru fica visível no painel, fora de menus fechados.
+- Selo "OK.RU v3" aparece no topo do cadastro para confirmar que a versão nova entrou.
+- Temporadas são botões e episódios são cartões com imagem; não existe mais seletor de episódio em texto.
+- O importador consulta os metadados de cada vídeo do OK.ru para obter o título.
+- Quando a série foi escolhida no TMDB, o título oficial do episódio do TMDB é usado.
+- Reimportar a mesma playlist corrige itens antigos em vez de apenas ignorá-los.
+- Um item antigo criado com o próprio link /video/c... é removido na reimportação.
+- HTML, CSS e JavaScript não ficam presos no cache após o deploy.
+
+COMO ATUALIZAR
+1. Extraia o ZIP.
+2. Envie TODOS os arquivos e pastas extraídos por cima dos arquivos do repositório no GitHub.
+3. No Render: Manual Deploy > Clear build cache & deploy.
+4. Quando aparecer Live, abra /admin e pressione Ctrl+F5 uma vez.
+5. Confira se aparece o selo OK.RU v3.
+
+COMO IMPORTAR A SÉRIE
+1. No painel, busque a série no TMDB e clique em Usar.
+2. Preencha a temporada inicial, normalmente 1.
+3. No quadro PLAYLIST DO OK.RU, cole:
+   https://ok.ru/video/c23729458
+4. Clique em Puxar todos os vídeos da playlist.
+
+Ao reimportar, os títulos antigos com o mesmo link são atualizados automaticamente.

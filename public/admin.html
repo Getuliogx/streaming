@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Painel | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260720-3">
 </head>
 <body>
   <header class="topbar">
@@ -36,6 +36,7 @@
           <div>
             <p class="eyebrow">CADASTRO</p>
             <h1 id="formHeading">Adicionar conteúdo</h1>
+            <span class="build-badge">OK.RU v3</span>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
@@ -58,6 +59,23 @@
           </form>
           <p id="tmdbMessage" class="form-message"></p>
           <div id="tmdbResults" class="tmdb-results"></div>
+        </section>
+
+        <section class="okru-import-hero">
+          <div class="okru-import-title">
+            <div>
+              <p class="eyebrow">PLAYLIST DO OK.RU</p>
+              <h2>Colar o link e puxar todos os episódios</h2>
+            </div>
+            <span class="status-badge">POR LINK</span>
+          </div>
+          <p class="source-help strong-help">Cole aqui o link público da playlist/canal. Exemplo: <code>https://ok.ru/video/c23729458</code>.</p>
+          <label>Link da playlist do OK.ru
+            <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458" autocomplete="off">
+          </label>
+          <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB</label>
+          <button id="importOkruButton" class="primary-button okru-import-button" type="button">▶ Puxar todos os vídeos da playlist</button>
+          <p id="okruPlaylistMessage" class="form-message"></p>
         </section>
 
         <form id="titleForm" class="stack-form">
@@ -139,32 +157,14 @@
           <p id="formMessage" class="form-message"></p>
         </form>
 
-        <details class="playlist-box" open>
-          <summary>Importar uma playlist inteira</summary>
+        <details class="playlist-box">
+          <summary>Importar arquivo M3U, M3U8 ou TXT</summary>
           <div class="stack-form details-fields">
-            <div class="import-block">
-              <strong>Playlist/canal do OK.ru por link</strong>
-              <p class="source-help">Cole o endereço da página que mostra todos os vídeos. Exemplo: <code>https://ok.ru/video/c23729458</code>. O painel procura todos os vídeos e usa o título real de cada página.</p>
-              <label>Link da playlist do OK.ru
-                <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458">
-              </label>
-              <button id="importOkruButton" class="primary-button" type="button">Puxar todos do OK.ru</button>
-              <p id="okruPlaylistMessage" class="form-message"></p>
-            </div>
-
-            <div class="import-divider"><span>OU</span></div>
-
-            <div class="import-block">
-              <strong>Arquivo M3U, M3U8 ou TXT</strong>
-              <label>Arquivo da playlist
-                <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
-              </label>
-              <button id="importPlaylistButton" class="ghost-button" type="button">Importar arquivo</button>
-              <p id="playlistMessage" class="form-message"></p>
-            </div>
-
-            <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, capa, temporada inicial e dados preenchidos acima</label>
-            <p class="source-help">Para uma série: primeiro busque a série no TMDB, clique em <b>Usar</b>, informe a temporada inicial e depois importe.</p>
+            <label>Arquivo da playlist
+              <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
+            </label>
+            <button id="importPlaylistButton" class="ghost-button" type="button">Importar arquivo</button>
+            <p id="playlistMessage" class="form-message"></p>
           </div>
         </details>
       </aside>
@@ -183,6 +183,6 @@
     </section>
   </main>
 
-  <script src="/assets/admin.js" defer></script>
+  <script src="/assets/admin.js?v=20260720-3" defer></script>
 </body>
 </html>

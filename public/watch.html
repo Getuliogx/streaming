@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Assistir | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260720-3">
 </head>
 <body class="watch-page">
   <header class="topbar">
@@ -36,22 +36,12 @@
     <section id="relatedEpisodes" class="watch-episodes hidden">
       <div class="section-heading compact">
         <div>
-          <p class="eyebrow">CONTINUAR A SÉRIE</p>
-          <h2>Escolha outro episódio</h2>
+          <p class="eyebrow">TEMPORADAS E EPISÓDIOS</p>
+          <h2>Escolha pela capa</h2>
         </div>
       </div>
 
-      <div class="watch-switcher">
-        <label>
-          <span>Temporada</span>
-          <select id="watchSeasonSelect" class="stream-select" aria-label="Temporada"></select>
-        </label>
-        <label>
-          <span>Episódio</span>
-          <select id="watchEpisodeSelect" class="stream-select" aria-label="Episódio"></select>
-        </label>
-        <button id="watchGoEpisode" class="primary-button" type="button">▶ Abrir episódio</button>
-      </div>
+      <div id="watchSeasonTabs" class="season-tabs watch-season-tabs" aria-label="Escolher temporada"></div>
 
       <div class="episode-nav-row">
         <a id="previousEpisode" class="ghost-button hidden" href="#">← Episódio anterior</a>
@@ -65,6 +55,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
-  <script src="/assets/watch.js" defer></script>
+  <script src="/assets/watch.js?v=20260720-3" defer></script>
 </body>
 </html>

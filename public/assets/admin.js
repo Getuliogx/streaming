@@ -306,7 +306,7 @@ importOkruButton.addEventListener('click', async () => {
     });
     setMessage(
       okruPlaylistMessage,
-      `${result.found} vídeo(s) encontrado(s). ${result.added} adicionado(s) e ${result.skipped} repetido(s) ignorado(s).`,
+      `${result.found} vídeo(s) encontrado(s). ${result.added} novo(s), ${result.updated || 0} corrigido(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} ignorado(s).`,
       'success'
     );
     await loadItems();

@@ -55,6 +55,18 @@ app.use(helmet({
 app.use(compression());
 app.use(express.json({ limit: '6mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+
+// O painel e os arquivos visuais não ficam presos no cache do navegador após um deploy.
+app.use((req, res, next) => {
+  if (req.path === '/admin' || req.path.endsWith('.html') || req.path.startsWith('/assets/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+  next();
+});
+
 app.use(session({
   name: 'stream_admin',
   secret: process.env.SESSION_SECRET || GITHUB_TOKEN || process.env.ADMIN_PASSWORD || 'troque-esta-chave-local',
@@ -69,7 +81,9 @@ app.use(session({
 }));
 app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html'],
-  maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0
+  maxAge: 0,
+  etag: false,
+  lastModified: false
 }));
 
 const loginLimiter = rateLimit({
@@ -212,6 +226,60 @@ async function fetchOkruHtml(inputUrl) {
   throw new Error('O OK.ru fez redirecionamentos demais.');
 }
 
+function unwrapOkruJson(raw) {
+  const text = String(raw || '').trim()
+    .replace(/^while\s*\(\s*1\s*\)\s*;?/i, '')
+    .replace(/^for\s*\(\s*;;\s*\)\s*;?/i, '')
+    .trim();
+  const starts = [text.indexOf('{'), text.indexOf('[')].filter(index => index >= 0);
+  const start = starts.length ? Math.min(...starts) : -1;
+  return start >= 0 ? text.slice(start) : text;
+}
+
+function deepFindObject(root, predicate) {
+  const queue = [root];
+  const visited = new Set();
+  while (queue.length) {
+    const value = queue.shift();
+    if (!value || typeof value !== 'object' || visited.has(value)) continue;
+    visited.add(value);
+    if (predicate(value)) return value;
+    for (const child of Object.values(value)) {
+      if (child && typeof child === 'object') queue.push(child);
+    }
+  }
+  return null;
+}
+
+async function fetchOkruVideoMetadata(id) {
+  const metadataUrl = new URL('https://ok.ru/dk');
+  metadataUrl.searchParams.set('cmd', 'videoPlayerMetadata');
+  metadataUrl.searchParams.set('mid', String(id));
+
+  try {
+    const response = await fetchOkruHtml(metadataUrl);
+    const parsed = JSON.parse(unwrapOkruJson(response.html));
+    const movie = deepFindObject(parsed, value => {
+      const title = value.title || value.name || value.movieTitle;
+      return Boolean(title && (value.id || value.movieId || value.poster || value.posterUrl || value.duration));
+    }) || deepFindObject(parsed, value => Boolean(value.title || value.movieTitle));
+
+    const title = cleanOkruTitle(movie?.title || movie?.movieTitle || movie?.name || '');
+    const poster = cleanHttpUrl(movie?.poster || movie?.posterUrl || movie?.thumbnail || movie?.image || '', 2000);
+    if (title || poster) return { title, poster };
+  } catch {}
+
+  try {
+    const page = await fetchOkruHtml(new URL(`https://ok.ru/video/${id}`));
+    return {
+      title: extractOkruPageTitle(page.html),
+      poster: cleanHttpUrl(extractMetaContent(page.html, 'property', 'og:image'), 2000)
+    };
+  } catch {
+    return { title: '', poster: '' };
+  }
+}
+
 function extractTagAttribute(attributes, name) {
   const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
   const match = String(attributes || '').match(pattern);
@@ -300,13 +368,26 @@ function parseOkruListing(html, baseUrl) {
   for (const pattern of videoUrlPatterns) {
     while ((match = pattern.exec(source))) {
       const id = match[1];
-      const after = source.slice(match.index, Math.min(source.length, match.index + 700));
-      const before = source.slice(Math.max(0, match.index - 500), match.index);
-      const nearTitle = after.match(/"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
-        || [...before.matchAll(/"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi)].at(-1)?.[1]
+      const after = source.slice(match.index, Math.min(source.length, match.index + 900));
+      const before = source.slice(Math.max(0, match.index - 700), match.index);
+      const nearTitle = after.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
+        || [...before.matchAll(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi)].at(-1)?.[1]
         || '';
       addVideo(id, nearTitle);
     }
+  }
+
+  // Alguns layouts do OK.ru guardam o ID apenas em atributos/objetos, sem /video/ no HTML.
+  const looseIdPattern = /(?:data-(?:video|movie)(?:-?id)?|videoId|movieId|video_id)\\?["']?\s*(?:=|:)\s*\\?["']?(\d{6,})/gi;
+  while ((match = looseIdPattern.exec(source))) {
+    const id = match[1];
+    const area = source.slice(Math.max(0, match.index - 700), Math.min(source.length, match.index + 1100));
+    const attributeTitle = area.match(/(?:data-title|aria-label|title)\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+    const nearTitle = attributeTitle?.[1]
+      || attributeTitle?.[2]
+      || area.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
+      || '';
+    addVideo(id, nearTitle);
   }
 
   return { videos, pageLinks, pageTitle: extractOkruPageTitle(source) };
@@ -327,16 +408,15 @@ async function mapWithConcurrency(values, limit, worker) {
 }
 
 async function enrichOkruVideoMetadata(entries) {
-  const missing = entries.filter(entry => isGenericVideoTitle(entry.title, entry.id));
-  if (!missing.length) return entries;
-  const enriched = await mapWithConcurrency(missing.slice(0, 150), 5, async entry => {
-    const page = await fetchOkruHtml(new URL(`https://ok.ru/video/${entry.id}`));
-    const title = extractOkruPageTitle(page.html);
-    const poster = extractMetaContent(page.html, 'property', 'og:image');
+  // Consulta os metadados de cada vídeo para não usar o nome genérico da playlist como título do episódio.
+  const targets = entries.slice(0, 400);
+  const enriched = await mapWithConcurrency(targets, 6, async entry => {
+    const metadata = await fetchOkruVideoMetadata(entry.id);
+    const metadataTitle = cleanOkruTitle(metadata.title);
     return {
       ...entry,
-      title: isGenericVideoTitle(title, entry.id) ? entry.title : title,
-      poster: entry.poster || cleanHttpUrl(poster, 2000)
+      title: metadataTitle && !isGenericVideoTitle(metadataTitle, entry.id) ? metadataTitle : entry.title,
+      poster: entry.poster || metadata.poster || ''
     };
   });
   const byId = new Map(enriched.map(item => [item.id, item]));
@@ -439,6 +519,7 @@ function normalizeTitle(body) {
     genres: cleanText(body.genres, 300),
     cover_url: cleanHttpUrl(body.cover_url, 2000),
     backdrop_url: cleanHttpUrl(body.backdrop_url, 2000),
+    episode_image_url: cleanHttpUrl(body.episode_image_url, 2000),
     content_type: contentType,
     season: cleanNullableInt(body.season),
     episode: cleanNullableInt(body.episode),
@@ -643,25 +724,56 @@ async function createTitle(record) {
   });
 }
 
-async function createManyTitles(records) {
+async function createManyTitles(records, options = {}) {
+  const updateExisting = Boolean(options.updateExisting);
+  const removeSourceUrls = new Set((options.removeSourceUrls || []).map(value => String(value || '').trim()).filter(Boolean));
+
   return mutateCatalog(`Importar playlist: ${records.length} itens`, items => {
+    let removed = 0;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (removeSourceUrls.has(String(items[index].source_url || '').trim())) {
+        items.splice(index, 1);
+        removed += 1;
+      }
+    }
+
     let nextId = items.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
-    const existingUrls = new Set(items.map(item => String(item.source_url || '').trim()).filter(Boolean));
+    const existingByUrl = new Map();
+    items.forEach((item, index) => {
+      const url = String(item.source_url || '').trim();
+      if (url) existingByUrl.set(url, index);
+    });
+
     const now = new Date().toISOString();
     const created = [];
+    let updated = 0;
     let skipped = 0;
 
     for (const record of records) {
-      if (existingUrls.has(record.source_url)) {
-        skipped += 1;
+      const existingIndex = existingByUrl.get(record.source_url);
+      if (existingIndex !== undefined) {
+        if (updateExisting) {
+          const previous = items[existingIndex];
+          items[existingIndex] = {
+            ...previous,
+            ...record,
+            id: previous.id,
+            created_at: previous.created_at || now,
+            updated_at: now
+          };
+          updated += 1;
+        } else {
+          skipped += 1;
+        }
         continue;
       }
+
       const item = { id: nextId++, ...record, created_at: now, updated_at: now };
       items.push(item);
       created.push(item);
-      existingUrls.add(record.source_url);
+      existingByUrl.set(record.source_url, items.length - 1);
     }
-    return { added: created.length, skipped, items: created };
+    return { added: created.length, updated, skipped, removed, items: created };
   });
 }
 
@@ -781,7 +893,15 @@ function buildRecordsFromOkru(entries, defaults = {}, collectionTitle = '') {
     let title = rawTitle;
     if (isEpisode) {
       title = cleanOkruTitle(info?.episodeTitle || removeSeriesPrefix(rawTitle, seriesTitle));
-      if (!title || title === rawTitle && isGenericVideoTitle(title, entry.id)) title = `Episódio ${episode}`;
+      const normalizedTitle = title.toLocaleLowerCase('pt-BR');
+      const normalizedSeries = seriesTitle.toLocaleLowerCase('pt-BR');
+      const onlyEpisodeMarker = /^(?:t(?:emporada)?\s*\d+\s*[-–—.:| ]*)?(?:e|ep|epis[óo]dio)\s*\d+$/i.test(title);
+      if (!title
+        || normalizedTitle === normalizedSeries
+        || onlyEpisodeMarker
+        || isGenericVideoTitle(title, entry.id)) {
+        title = `Episódio ${episode}`;
+      }
     }
 
     return normalizeTitle({
@@ -815,10 +935,11 @@ async function enrichEpisodeRecordsWithTmdb(records) {
   return records.map(record => {
     const tmdbEpisode = episodeData.get(`${record.season}:${record.episode}`);
     if (!tmdbEpisode) return record;
-    const generic = isGenericVideoTitle(record.title) || /^Episódio\s+\d+$/i.test(record.title);
     return {
       ...record,
-      title: generic && tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : record.title,
+      // Quando a série veio do TMDB, o nome oficial do episódio tem prioridade.
+      title: tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : record.title,
+      episode_image_url: tmdbImage(tmdbEpisode.still_path, 'w780') || record.episode_image_url || '',
       description: record.description || cleanText(tmdbEpisode.overview, 5000)
     };
   });
@@ -1082,7 +1203,11 @@ app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
     const collection = await readOkruCollection(req.body.url);
     let records = buildRecordsFromOkru(collection.entries, defaults, collection.title);
     records = await enrichEpisodeRecordsWithTmdb(records);
-    const result = await createManyTitles(records);
+    const playlistUrl = normalizeOkruUrl(req.body.url).toString();
+    const result = await createManyTitles(records, {
+      updateExisting: true,
+      removeSourceUrls: [playlistUrl]
+    });
     res.status(201).json({
       ...result,
       parsed: records.length,

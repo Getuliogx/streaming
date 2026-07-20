@@ -8,9 +8,7 @@ const watchDescription = document.querySelector('#watchDescription');
 const watchError = document.querySelector('#watchError');
 const favoriteButton = document.querySelector('#favoriteButton');
 const relatedEpisodes = document.querySelector('#relatedEpisodes');
-const watchSeasonSelect = document.querySelector('#watchSeasonSelect');
-const watchEpisodeSelect = document.querySelector('#watchEpisodeSelect');
-const watchGoEpisode = document.querySelector('#watchGoEpisode');
+const watchSeasonTabs = document.querySelector('#watchSeasonTabs');
 const watchEpisodeList = document.querySelector('#watchEpisodeList');
 const previousEpisode = document.querySelector('#previousEpisode');
 const nextEpisode = document.querySelector('#nextEpisode');
@@ -20,6 +18,7 @@ const params = new URLSearchParams(location.search);
 const id = Number(params.get('id'));
 let currentItem = null;
 let seriesEpisodes = [];
+let activeSeason = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -79,14 +78,14 @@ function mountPlayer(item) {
     return;
   }
   if (item.source_type === 'hls') {
-    buildVideo(item.source_url, true, item.backdrop_url || item.cover_url || '');
+    buildVideo(item.source_url, true, item.episode_image_url || item.backdrop_url || item.cover_url || '');
     return;
   }
   if (item.source_type === 'iframe') {
     buildIframe(item.source_url, item.title);
     return;
   }
-  buildVideo(item.source_url, false, item.backdrop_url || item.cover_url || '');
+  buildVideo(item.source_url, false, item.episode_image_url || item.backdrop_url || item.cover_url || '');
 }
 
 function showError(message) {
@@ -122,36 +121,37 @@ function seasonLabel(value) {
   return `Temporada ${value}`;
 }
 
-function episodeLabel(item) {
-  const number = item.episode !== null && item.episode !== undefined ? `Episódio ${item.episode}` : 'Episódio';
-  return item.title ? `${number} — ${item.title}` : number;
+function episodeTitle(item) {
+  const raw = String(item.title || '').trim();
+  const series = String(item.series_title || '').trim();
+  if (!raw || raw.toLocaleLowerCase('pt-BR') === series.toLocaleLowerCase('pt-BR')) {
+    return `Episódio ${item.episode ?? ''}`.trim();
+  }
+  return raw;
 }
 
-function updateEpisodeButton() {
-  const selectedId = Number(watchEpisodeSelect.value);
-  watchGoEpisode.disabled = !Number.isInteger(selectedId) || selectedId < 1 || selectedId === id;
-  watchGoEpisode.textContent = selectedId === id ? '▶ Episódio atual' : '▶ Abrir episódio';
+function episodesForSeason(season) {
+  return seriesEpisodes.filter(item => (item.season ?? null) === season);
 }
 
-function renderWatchEpisodes(seasonValue, preferredId = null) {
-  const season = seasonValue === 'null' ? null : Number(seasonValue);
-  const filtered = seriesEpisodes.filter(item => (item.season ?? null) === season);
+function renderSeasonTabs() {
+  const seasons = [...new Set(seriesEpisodes.map(item => item.season ?? null))]
+    .sort((a, b) => (a ?? -1) - (b ?? -1));
 
-  watchEpisodeSelect.innerHTML = filtered.map(item => `
-    <option value="${item.id}">${escapeHtml(episodeLabel(item))}</option>`).join('');
+  watchSeasonTabs.innerHTML = seasons.map(season => `
+    <button class="season-button ${season === activeSeason ? 'active' : ''}" type="button" data-season="${seasonKey(season)}">
+      ${escapeHtml(seasonLabel(season))}
+    </button>`).join('');
+}
 
-  const preferred = filtered.find(item => Number(item.id) === Number(preferredId))
-    || filtered.find(item => Number(item.id) === id)
-    || filtered[0];
-  if (preferred) watchEpisodeSelect.value = String(preferred.id);
-  updateEpisodeButton();
-
+function renderWatchEpisodes() {
+  const filtered = episodesForSeason(activeSeason);
   watchEpisodeList.innerHTML = filtered.map(item => {
     const active = Number(item.id) === id;
-    const image = item.backdrop_url || item.cover_url || '';
+    const image = item.episode_image_url || item.backdrop_url || item.cover_url || '';
     const number = item.episode !== null && item.episode !== undefined ? `E${item.episode}` : 'EP';
     const thumb = image
-      ? `<img src="${escapeHtml(image)}" alt="" loading="lazy">`
+      ? `<img src="${escapeHtml(image)}" alt="Capa do episódio ${escapeHtml(item.episode ?? '')}" loading="lazy">`
       : `<div class="episode-thumb-placeholder">${escapeHtml(number)}</div>`;
 
     return `
@@ -163,10 +163,16 @@ function renderWatchEpisodes(seasonValue, preferredId = null) {
         </div>
         <div>
           <small>${escapeHtml(seasonLabel(item.season))} • ${escapeHtml(item.episode !== null && item.episode !== undefined ? `Episódio ${item.episode}` : 'Episódio')}</small>
-          <strong>${escapeHtml(item.title || `Episódio ${item.episode ?? ''}`)}</strong>
+          <strong>${escapeHtml(episodeTitle(item))}</strong>
         </div>
       </a>`;
   }).join('');
+}
+
+function setSeason(season) {
+  activeSeason = season;
+  renderSeasonTabs();
+  renderWatchEpisodes();
 }
 
 function updatePreviousNext() {
@@ -182,7 +188,7 @@ function updatePreviousNext() {
 
 async function loadRelatedEpisodes(seriesTitle) {
   try {
-    const response = await fetch(`/api/series?title=${encodeURIComponent(seriesTitle)}`);
+    const response = await fetch(`/api/series?title=${encodeURIComponent(seriesTitle)}`, { cache: 'no-store' });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || 'Não foi possível carregar os episódios.');
 
@@ -190,35 +196,30 @@ async function loadRelatedEpisodes(seriesTitle) {
       || (Number(a.episode) || 0) - (Number(b.episode) || 0)
       || Number(a.id) - Number(b.id));
 
-    const seasons = [...new Set(seriesEpisodes.map(item => item.season ?? null))]
-      .sort((a, b) => (a ?? -1) - (b ?? -1));
-    const currentSeason = currentItem.season ?? null;
-
-    watchSeasonSelect.innerHTML = seasons.map(season => `
-      <option value="${seasonKey(season)}" ${season === currentSeason ? 'selected' : ''}>${escapeHtml(seasonLabel(season))}</option>`).join('');
-
-    renderWatchEpisodes(seasonKey(currentSeason), id);
+    activeSeason = currentItem.season ?? seriesEpisodes[0]?.season ?? null;
+    renderSeasonTabs();
+    renderWatchEpisodes();
     updatePreviousNext();
     relatedEpisodes.classList.remove('hidden');
-    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${currentSeason ?? ''}&episode=${id}`;
+    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${activeSeason ?? ''}&episode=${id}`;
     seriesBackButton.classList.remove('hidden');
   } catch (error) {
     console.error(error);
   }
 }
 
+watchSeasonTabs.addEventListener('click', event => {
+  const button = event.target.closest('button[data-season]');
+  if (!button) return;
+  const season = button.dataset.season === 'null' ? null : Number(button.dataset.season);
+  setSeason(season);
+});
+
 favoriteButton.addEventListener('click', () => {
   const favorites = getFavorites();
   const next = favorites.includes(id) ? favorites.filter(itemId => itemId !== id) : [id, ...favorites];
   localStorage.setItem('streamFavorites', JSON.stringify(next));
   updateFavoriteButton();
-});
-
-watchSeasonSelect.addEventListener('change', () => renderWatchEpisodes(watchSeasonSelect.value));
-watchEpisodeSelect.addEventListener('change', updateEpisodeButton);
-watchGoEpisode.addEventListener('click', () => {
-  const selectedId = Number(watchEpisodeSelect.value);
-  if (Number.isInteger(selectedId) && selectedId > 0 && selectedId !== id) location.href = `/watch.html?id=${selectedId}`;
 });
 
 async function loadItem() {
@@ -228,13 +229,14 @@ async function loadItem() {
   }
 
   try {
-    const response = await fetch(`/api/catalog/${id}`);
+    const response = await fetch(`/api/catalog/${id}`, { cache: 'no-store' });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || 'Conteúdo não encontrado.');
 
     currentItem = body;
-    document.title = `${body.title} | Minha Stream`;
-    watchTitle.textContent = body.title;
+    const visibleTitle = body.content_type === 'episode' ? episodeTitle(body) : body.title;
+    document.title = `${visibleTitle} | Minha Stream`;
+    watchTitle.textContent = visibleTitle;
     watchEyebrow.textContent = body.series_title || (body.content_type === 'episode' ? 'EPISÓDIO' : 'FILME / VÍDEO');
 
     const meta = [];
