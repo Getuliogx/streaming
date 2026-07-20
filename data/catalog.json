@@ -571,5 +571,28 @@
     "published": true,
     "created_at": "2026-07-20T13:16:20.135Z",
     "updated_at": "2026-07-20T13:16:20.135Z"
+  },
+  {
+    "id": 27,
+    "title": "A Múmia",
+    "series_title": "",
+    "description": "Em 1926, um grupo de arqueólogos descobre uma tumba na cidade perdida de Hamunaptra. Dentro da tumba é encontrado o corpo de Imhotep, o sacerdote do Faraó Seti, que foi mumificado vivo além de ter recebido a mais terrível das maldições por ter dormido com a amante do faraó e, movido por ciúme doentio e amor, ter matado o Faraó. No entanto, quando um dos membros da expedição lê um manuscrito que foi encontrado pelo grupo e traz Imhotep de volta vida, ele ressurge cheio de ódio e só pensa em reencontrar sua amada e destruir todos que cruzem o seu caminho, trazendo consigo as dez pragas do Egito.",
+    "year": 1999,
+    "genres": "Aventura, Ação, Fantasia",
+    "category": "",
+    "cover_url": "https://image.tmdb.org/t/p/w500/kyLGWOQT17uOJwYIn0sgj00vVPo.jpg",
+    "backdrop_url": "https://image.tmdb.org/t/p/original/8zLS8p1tRyWFLRFfmgQq0j5WE6z.jpg",
+    "episode_image_url": "",
+    "content_type": "movie",
+    "season": null,
+    "episode": null,
+    "source_type": "gdrive",
+    "source_url": "https://drive.google.com/file/d/1aIvtTBoidXR8FabUqbAywsDSV54ecPEd/view?usp=sharing",
+    "tmdb_id": 564,
+    "tmdb_type": "movie",
+    "featured": false,
+    "published": true,
+    "created_at": "2026-07-20T13:21:59.259Z",
+    "updated_at": "2026-07-20T13:21:59.259Z"
   }
 ]
