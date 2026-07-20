@@ -27,14 +27,16 @@ const ALLOWED_CONTENT_TYPES = new Set(['movie', 'episode']);
 const ALLOWED_SOURCE_TYPES = new Set(['okru', 'gdrive', 'direct', 'hls', 'iframe']);
 const ALLOWED_TMDB_TYPES = new Set(['movie', 'tv']);
 const MAX_PLAYLIST_ITEMS = 1500;
-const MAX_OKRU_PAGES = 30;
+const MAX_OKRU_PAGES = 90;
 const MAX_OKRU_ITEMS = 1500;
-const OKRU_TIMEOUT_MS = 20_000;
+const OKRU_TIMEOUT_MS = 25_000;
+const OKRU_IMPORT_VERSION = '6.0.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
 let resolvedCatalogBranch = null;
 let mutationQueue = Promise.resolve();
+const okruCookieJar = new Map();
 
 app.set('trust proxy', 1);
 app.use(helmet({
@@ -192,23 +194,45 @@ function okruMobileUrl(url) {
   return mobile;
 }
 
+function getOkruCookieHeader() {
+  return [...okruCookieJar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+function storeOkruCookies(response) {
+  const values = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie')].filter(Boolean);
+  for (const value of values) {
+    const first = String(value || '').split(';', 1)[0];
+    const index = first.indexOf('=');
+    if (index <= 0) continue;
+    const name = first.slice(0, index).trim();
+    const cookieValue = first.slice(index + 1).trim();
+    if (name && cookieValue) okruCookieJar.set(name, cookieValue);
+  }
+}
+
 async function fetchOkruHtml(inputUrl) {
   let current = new URL(inputUrl.toString());
-  for (let redirect = 0; redirect < 6; redirect += 1) {
+  for (let redirect = 0; redirect < 8; redirect += 1) {
     if (!isOkruHost(current.hostname)) throw new Error('O OK.ru redirecionou para um endereço não permitido.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), OKRU_TIMEOUT_MS);
     let response;
     try {
+      const cookie = getOkruCookieHeader();
       response = await fetch(current, {
         redirect: 'manual',
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.7'
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7,ru;q=0.5',
+          Referer: 'https://ok.ru/',
+          ...(cookie ? { Cookie: cookie } : {})
         }
       });
+      storeOkruCookies(response);
     } catch (error) {
       if (error.name === 'AbortError') throw new Error('O OK.ru demorou demais para responder. Tente novamente.');
       throw new Error(`Não foi possível abrir o link do OK.ru: ${error.message}`);
@@ -310,10 +334,50 @@ function isGenericVideoTitle(title, id = '') {
   return value === String(id) || /^(?:vídeo|video|assistir|ok\.ru)(?:\s+\d+)?$/i.test(value);
 }
 
+function extractExpectedVideoCount(html) {
+  const text = stripHtml(String(html || ''));
+  const candidates = [];
+  const patterns = [
+    /\b([\d.,\s]{1,12})\s*(?:vídeos?|videos?|video|ролик(?:ов|а)?|видео)\b/gi,
+    /"(?:videoCount|videosCount|totalCount|total)"\s*:\s*"?(\d{1,6})"?/gi
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(pattern === patterns[0] ? text : String(html || '')))) {
+      const number = Number(String(match[1]).replace(/\D/g, ''));
+      if (Number.isInteger(number) && number > 0 && number <= MAX_OKRU_ITEMS) candidates.push(number);
+    }
+  }
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
+function extractNearbyOkruTitle(source, index, id) {
+  const before = source.slice(Math.max(0, index - 1200), index);
+  const after = source.slice(index, Math.min(source.length, index + 2200));
+  const area = `${before}${after}`;
+  const attribute = area.match(/(?:data-title|aria-label|title)\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+  const json = area.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i);
+  const visiblePatterns = [
+    /class\s*=\s*(?:"[^"]*(?:video-card_n|video-card_name|video-title|card-title)[^"]*"|'[^']*(?:video-card_n|video-card_name|video-title|card-title)[^']*')[^>]*>([\s\S]{1,400}?)<\//i,
+    /<a\b[^>]*href\s*=\s*(?:"|')[^"']*\/video\/\d+[^"']*(?:"|')[^>]*>([\s\S]{1,500}?)<\/a>/i,
+    /<h[1-6]\b[^>]*>([\s\S]{1,400}?)<\/h[1-6]>/i
+  ];
+  let visible = '';
+  for (const pattern of visiblePatterns) {
+    const found = after.match(pattern) || before.match(pattern);
+    if (found?.[1]) { visible = stripHtml(found[1]); break; }
+  }
+  const value = attribute?.[1] || attribute?.[2] || json?.[1] || visible || '';
+  const cleaned = cleanOkruTitle(value);
+  return isGenericVideoTitle(cleaned, id) ? '' : cleaned;
+}
+
 function parseOkruListing(html, baseUrl) {
   const videos = new Map();
   const pageLinks = new Set();
   const source = String(html || '');
+  const collectionMatch = String(baseUrl.pathname || '').match(/\/video\/c(\d+)/i);
+  const collectionId = collectionMatch?.[1] || '';
 
   function addVideo(id, title = '', poster = '') {
     if (!/^\d{6,}$/.test(String(id || ''))) return;
@@ -323,6 +387,19 @@ function parseOkruListing(html, baseUrl) {
     if (!previous.title || isGenericVideoTitle(previous.title, numericId)) previous.title = cleaned || previous.title;
     if (!previous.poster && poster) previous.poster = cleanHttpUrl(decodeHtmlEntities(poster), 2000);
     videos.set(numericId, previous);
+  }
+
+  function addPageLink(value) {
+    const decoded = decodeHtmlEntities(String(value || '').replace(/\\\//g, '/'));
+    if (!decoded) return;
+    let resolved;
+    try { resolved = new URL(decoded, baseUrl); } catch { return; }
+    if (!isOkruHost(resolved.hostname)) return;
+    const sameCollection = collectionId && resolved.toString().includes(`c${collectionId}`);
+    const pageHint = /(?:^|[?&])(st\.page|page|p)=\d+/i.test(resolved.search)
+      || /\/(?:page|p)\/\d+/i.test(resolved.pathname)
+      || /showmore|loadmore|pagination/i.test(resolved.toString());
+    if (sameCollection || pageHint) pageLinks.add(resolved.toString());
   }
 
   const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
@@ -340,57 +417,51 @@ function parseOkruListing(html, baseUrl) {
       const title = extractTagAttribute(attrs, 'data-title')
         || extractTagAttribute(attrs, 'aria-label')
         || extractTagAttribute(attrs, 'title')
-        || stripHtml(anchor[2]);
+        || stripHtml(anchor[2])
+        || extractNearbyOkruTitle(source, anchor.index, videoMatch[1]);
       const poster = extractTagAttribute(attrs, 'data-poster') || extractTagAttribute(attrs, 'data-image');
       addVideo(videoMatch[1], title, poster);
       continue;
     }
+    addPageLink(resolved.toString());
+  }
 
-    if (/^\/video\/c\d+/i.test(resolved.pathname)
-      && resolved.pathname.toLowerCase() === baseUrl.pathname.toLowerCase()
-      && resolved.search !== baseUrl.search) {
-      pageLinks.add(resolved.toString());
+  // Links e ações usados no layout atual do OK.ru, inclusive openMovie('ID', ...).
+  const idPatterns = [
+    /\/video(?:embed)?\/(\d{6,})/gi,
+    /\\\/video(?:embed)?\\\/(\d{6,})/gi,
+    /openMovie\s*\(\s*['"](\d{6,})['"]/gi,
+    /(?:data-(?:video|movie)(?:-?id)?|videoId|movieId|video_id)\\?["']?\s*(?:=|:)\s*\\?["']?(\d{6,})/gi
+  ];
+  let match;
+  for (const pattern of idPatterns) {
+    while ((match = pattern.exec(source))) {
+      const id = match[1];
+      addVideo(id, extractNearbyOkruTitle(source, match.index, id));
     }
   }
 
   const jsonPatterns = [
-    /"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?[\s\S]{0,700}?"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi,
-    /"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,700}?"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?/gi
+    /"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?[\s\S]{0,900}?"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi,
+    /"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,900}?"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?/gi
   ];
-  let match;
   while ((match = jsonPatterns[0].exec(source))) addVideo(match[1], match[2]);
   while ((match = jsonPatterns[1].exec(source))) addVideo(match[2], match[1]);
 
-  const videoUrlPatterns = [
-    /\/video(?:embed)?\/(\d{6,})/gi,
-    /\\\/video(?:embed)?\\\/(\d{6,})/gi
+  const hrefPatterns = [
+    /(?:href|url)\\?["']?\s*(?:=|:)\s*\\?["']([^"'\s>]*(?:st\.page|\/video\/c\d+)[^"'\s>]*)/gi,
+    /(?:https?:)?\\?\/\\?\/m?\.?(?:ok\.ru)[^"'\s<]*(?:st\.page|\/video\/c\d+)[^"'\s<]*/gi
   ];
-  for (const pattern of videoUrlPatterns) {
-    while ((match = pattern.exec(source))) {
-      const id = match[1];
-      const after = source.slice(match.index, Math.min(source.length, match.index + 900));
-      const before = source.slice(Math.max(0, match.index - 700), match.index);
-      const nearTitle = after.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
-        || [...before.matchAll(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi)].at(-1)?.[1]
-        || '';
-      addVideo(id, nearTitle);
-    }
+  for (const pattern of hrefPatterns) {
+    while ((match = pattern.exec(source))) addPageLink(match[1] || match[0]);
   }
 
-  // Alguns layouts do OK.ru guardam o ID apenas em atributos/objetos, sem /video/ no HTML.
-  const looseIdPattern = /(?:data-(?:video|movie)(?:-?id)?|videoId|movieId|video_id)\\?["']?\s*(?:=|:)\s*\\?["']?(\d{6,})/gi;
-  while ((match = looseIdPattern.exec(source))) {
-    const id = match[1];
-    const area = source.slice(Math.max(0, match.index - 700), Math.min(source.length, match.index + 1100));
-    const attributeTitle = area.match(/(?:data-title|aria-label|title)\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
-    const nearTitle = attributeTitle?.[1]
-      || attributeTitle?.[2]
-      || area.match(/"(?:title|name|movieTitle|videoTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
-      || '';
-    addVideo(id, nearTitle);
-  }
-
-  return { videos, pageLinks, pageTitle: extractOkruPageTitle(source) };
+  return {
+    videos,
+    pageLinks,
+    pageTitle: extractOkruPageTitle(source),
+    expectedCount: extractExpectedVideoCount(source)
+  };
 }
 
 async function mapWithConcurrency(values, limit, worker) {
@@ -408,19 +479,33 @@ async function mapWithConcurrency(values, limit, worker) {
 }
 
 async function enrichOkruVideoMetadata(entries) {
-  // Consulta os metadados de cada vídeo para não usar o nome genérico da playlist como título do episódio.
-  const targets = entries.slice(0, 400);
-  const enriched = await mapWithConcurrency(targets, 6, async entry => {
+  const targets = entries.slice(0, MAX_OKRU_ITEMS);
+  const enriched = await mapWithConcurrency(targets, 5, async entry => {
+    const currentTitle = cleanOkruTitle(entry.title);
+    const looksTruncated = /(?:\.\.\.|…)$/.test(currentTitle);
+    if (currentTitle && !looksTruncated && !isGenericVideoTitle(currentTitle, entry.id)) return entry;
     const metadata = await fetchOkruVideoMetadata(entry.id);
     const metadataTitle = cleanOkruTitle(metadata.title);
     return {
       ...entry,
-      title: metadataTitle && !isGenericVideoTitle(metadataTitle, entry.id) ? metadataTitle : entry.title,
+      title: metadataTitle && !isGenericVideoTitle(metadataTitle, entry.id) ? metadataTitle : currentTitle,
       poster: entry.poster || metadata.poster || ''
     };
   });
   const byId = new Map(enriched.map(item => [item.id, item]));
   return entries.map(item => byId.get(item.id) || item);
+}
+
+function mergeOkruParsed(parsed, videos) {
+  for (const [id, value] of parsed.videos) {
+    const old = videos.get(id);
+    if (!old) videos.set(id, value);
+    else videos.set(id, {
+      ...old,
+      title: (!old.title || isGenericVideoTitle(old.title, id)) ? (value.title || old.title) : old.title,
+      poster: old.poster || value.poster || ''
+    });
+  }
 }
 
 async function readOkruCollection(rawUrl) {
@@ -434,7 +519,9 @@ async function readOkruCollection(rawUrl) {
         id: directVideo[1],
         title: extractOkruPageTitle(page.html),
         poster: cleanHttpUrl(extractMetaContent(page.html, 'property', 'og:image'), 2000)
-      }]
+      }],
+      expectedCount: 1,
+      complete: true
     };
   }
 
@@ -442,52 +529,59 @@ async function readOkruCollection(rawUrl) {
     throw new Error('Esse endereço não parece ser uma playlist/canal do OK.ru. Use um link no formato https://ok.ru/video/c123456.');
   }
 
-  const queue = [original, okruMobileUrl(original)];
+  const desktopBase = new URL(original.toString());
+  desktopBase.hostname = 'ok.ru';
+  const mobileBase = okruMobileUrl(original);
+  const queue = [desktopBase, mobileBase];
   const visited = new Set();
   const videos = new Map();
   let collectionTitle = '';
+  let expectedCount = null;
 
-  while (queue.length && visited.size < MAX_OKRU_PAGES && videos.size < MAX_OKRU_ITEMS) {
-    const current = queue.shift();
+  async function readCandidate(current) {
     const key = current.toString();
-    if (visited.has(key)) continue;
+    if (visited.has(key)) return 0;
     visited.add(key);
-    let page;
-    try { page = await fetchOkruHtml(current); }
-    catch (error) {
-      if (visited.size <= 2 && !videos.size) throw error;
-      continue;
-    }
+    const before = videos.size;
+    const page = await fetchOkruHtml(current);
     const parsed = parseOkruListing(page.html, page.finalUrl);
     if (!collectionTitle && parsed.pageTitle) collectionTitle = parsed.pageTitle;
-    for (const [id, value] of parsed.videos) {
-      if (!videos.has(id) || isGenericVideoTitle(videos.get(id).title, id)) videos.set(id, value);
-    }
+    if (parsed.expectedCount) expectedCount = Math.max(expectedCount || 0, parsed.expectedCount);
+    mergeOkruParsed(parsed, videos);
     for (const link of parsed.pageLinks) {
-      if (!visited.has(link) && queue.length < MAX_OKRU_PAGES * 2) queue.push(new URL(link));
+      if (!visited.has(link) && queue.length < MAX_OKRU_PAGES * 4) queue.push(new URL(link));
     }
+    return videos.size - before;
   }
 
-  // A versão móvel costuma aceitar st.page mesmo quando o botão "próximo" é montado por JavaScript.
-  const mobileBase = okruMobileUrl(original);
-  let pagesWithoutNewItems = 0;
-  for (let pageNumber = 1; pageNumber <= MAX_OKRU_PAGES && videos.size < MAX_OKRU_ITEMS && pagesWithoutNewItems < 2; pageNumber += 1) {
-    const candidate = new URL(mobileBase.toString());
-    candidate.searchParams.set('st.page', String(pageNumber));
-    if (visited.has(candidate.toString())) continue;
-    visited.add(candidate.toString());
-    const before = videos.size;
-    try {
-      const page = await fetchOkruHtml(candidate);
-      const parsed = parseOkruListing(page.html, page.finalUrl);
-      for (const [id, value] of parsed.videos) {
-        if (!videos.has(id) || isGenericVideoTitle(videos.get(id).title, id)) videos.set(id, value);
-      }
-    } catch {
-      pagesWithoutNewItems += 1;
-      continue;
+  while (queue.length && visited.size < MAX_OKRU_PAGES * 4 && videos.size < MAX_OKRU_ITEMS) {
+    const current = queue.shift();
+    try { await readCandidate(current); }
+    catch (error) {
+      if (visited.size <= 2 && !videos.size) continue;
     }
-    pagesWithoutNewItems = videos.size === before ? pagesWithoutNewItems + 1 : 0;
+    if (expectedCount && videos.size >= expectedCount) break;
+  }
+
+  // O OK.ru muda o parâmetro de paginação entre os layouts. Testa as variantes
+  // desktop e móvel até completar a quantidade informada na própria página.
+  const strategies = ['st.page', 'page', 'p'];
+  for (const base of [desktopBase, mobileBase]) {
+    for (const parameter of strategies) {
+      let emptyPages = 0;
+      for (let pageNumber = 0; pageNumber <= MAX_OKRU_PAGES && videos.size < MAX_OKRU_ITEMS; pageNumber += 1) {
+        if (expectedCount && videos.size >= expectedCount) break;
+        const candidate = new URL(base.toString());
+        candidate.searchParams.set(parameter, String(pageNumber));
+        try {
+          const added = await readCandidate(candidate);
+          emptyPages = added ? 0 : emptyPages + 1;
+        } catch {
+          emptyPages += 1;
+        }
+        if (emptyPages >= 5) break;
+      }
+    }
   }
 
   if (!videos.size) {
@@ -495,7 +589,12 @@ async function readOkruCollection(rawUrl) {
   }
 
   const entries = await enrichOkruVideoMetadata([...videos.values()].slice(0, MAX_OKRU_ITEMS));
-  return { title: collectionTitle, entries };
+  return {
+    title: collectionTitle,
+    entries,
+    expectedCount,
+    complete: !expectedCount || entries.length >= expectedCount
+  };
 }
 
 function normalizeTitle(body) {
@@ -935,10 +1034,12 @@ async function enrichEpisodeRecordsWithTmdb(records) {
   return records.map(record => {
     const tmdbEpisode = episodeData.get(`${record.season}:${record.episode}`);
     if (!tmdbEpisode) return record;
+    const currentTitle = cleanText(record.title, 180);
+    const fallbackTitle = /^(?:epis[óo]dio|ep)\s*\d+$/i.test(currentTitle) || isGenericVideoTitle(currentTitle);
     return {
       ...record,
-      // Quando a série veio do TMDB, o nome oficial do episódio tem prioridade.
-      title: tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : record.title,
+      // Preserva o nome que veio do OK.ru. O TMDB só completa quando o título é genérico.
+      title: fallbackTitle && tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : currentTitle,
       episode_image_url: tmdbImage(tmdbEpisode.still_path, 'w780') || record.episode_image_url || '',
       description: record.description || cleanText(tmdbEpisode.overview, 5000)
     };
@@ -1212,7 +1313,10 @@ app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
       ...result,
       parsed: records.length,
       playlist_title: collection.title || '',
-      found: collection.entries.length
+      found: collection.entries.length,
+      expected: collection.expectedCount || null,
+      complete: collection.complete !== false,
+      importer_version: OKRU_IMPORT_VERSION
     });
   } catch (error) {
     if (/OK\.ru|playlist|canal|link|pública|vídeo|endereço|recusou|demorou/i.test(error.message)) {
@@ -1241,6 +1345,8 @@ app.delete('/api/admin/titles/:id', requireAdmin, async (req, res, next) => {
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
+
+app.get('/api/admin/importer-version', requireAdmin, (req, res) => res.json({ version: OKRU_IMPORT_VERSION }));
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/watch', (req, res) => res.sendFile(path.join(__dirname, 'public', 'watch.html')));
@@ -1284,5 +1390,8 @@ module.exports = {
   parseOkruListing,
   buildRecordsFromOkru,
   parsePlaylist,
-  extractOkruPageTitle
+  extractOkruPageTitle,
+  extractExpectedVideoCount,
+  readOkruCollection,
+  enrichEpisodeRecordsWithTmdb
 };

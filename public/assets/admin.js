@@ -27,6 +27,7 @@ const playlistFile = document.querySelector('#playlistFile');
 const playlistUseFormData = document.querySelector('#playlistUseFormData');
 const importPlaylistButton = document.querySelector('#importPlaylistButton');
 const playlistMessage = document.querySelector('#playlistMessage');
+const importerBuildBadge = document.querySelector('#importerBuildBadge');
 
 let items = [];
 let tmdbConfigured = false;
@@ -200,6 +201,8 @@ async function useTmdbResult(id, type) {
     titleForm.elements.content_type.value = 'episode';
     titleForm.elements.series_title.value = data.title;
     if (!titleForm.elements.id.value || !titleForm.elements.title.value.trim()) titleForm.elements.title.value = 'Episódio 1';
+    if (!titleForm.elements.season.value) titleForm.elements.season.value = '1';
+    if (!titleForm.elements.episode.value) titleForm.elements.episode.value = '1';
   } else {
     titleForm.elements.content_type.value = 'movie';
     titleForm.elements.title.value = data.title;
@@ -230,6 +233,10 @@ loginForm.addEventListener('submit', async event => {
     });
     const session = await api('/api/admin/session');
     showAdmin(session);
+    try {
+      const build = await api('/api/admin/importer-version');
+      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR OK.RU V${build.version}`;
+    } catch {}
     await loadItems();
   } catch (error) {
     setMessage(loginMessage, error.message, 'error');
@@ -304,10 +311,14 @@ importOkruButton.addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({ url, defaults })
     });
+    const expectedText = result.expected ? ` de ${result.expected}` : '';
+    const completeText = result.complete === false
+      ? ` O OK.ru informou ${result.expected}, mas liberou ${result.found} para o servidor. Tente novamente uma vez; os já encontrados serão atualizados sem duplicar.`
+      : ' Importação completa.';
     setMessage(
       okruPlaylistMessage,
-      `${result.found} vídeo(s) encontrado(s). ${result.added} novo(s), ${result.updated || 0} corrigido(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} ignorado(s).`,
-      'success'
+      `${result.found}${expectedText} vídeo(s) encontrado(s). ${result.added} novo(s), ${result.updated || 0} atualizado(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} repetido(s).${completeText}`,
+      result.complete === false ? 'error' : 'success'
     );
     await loadItems();
   } catch (error) {
@@ -356,6 +367,10 @@ importPlaylistButton.addEventListener('click', async () => {
     const session = await api('/api/admin/session');
     if (!session.authenticated) return showLogin();
     showAdmin(session);
+    try {
+      const build = await api('/api/admin/importer-version');
+      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR OK.RU V${build.version}`;
+    } catch {}
     await loadItems();
   } catch (error) {
     showLogin();

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Painel | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260720-3">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260720-6">
 </head>
 <body>
   <header class="topbar">
@@ -36,10 +36,28 @@
           <div>
             <p class="eyebrow">CADASTRO</p>
             <h1 id="formHeading">Adicionar conteúdo</h1>
-            <span class="build-badge">OK.RU v3</span>
+            <span id="importerBuildBadge" class="build-badge">IMPORTADOR OK.RU V6</span>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
+
+        <section id="okruImporter" class="okru-import-hero">
+          <div class="okru-import-title">
+            <div>
+              <p class="eyebrow">PLAYLIST DO OK.RU</p>
+              <h2>Colar o link e puxar todos os episódios</h2>
+            </div>
+            <span class="status-badge">POR LINK</span>
+          </div>
+          <p class="source-help strong-help">Cole aqui o link público da playlist/canal. Exemplo: <code>https://ok.ru/video/c23729458</code>.</p>
+          <label>Link da playlist do OK.ru
+            <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458" autocomplete="off">
+          </label>
+          <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB</label>
+          <button id="importOkruButton" class="primary-button okru-import-button" type="button">▶ Puxar todos os vídeos da playlist</button>
+          <p id="okruPlaylistMessage" class="form-message"></p>
+        </section>
+
 
         <section class="tmdb-box">
           <div class="mini-heading">
@@ -59,23 +77,6 @@
           </form>
           <p id="tmdbMessage" class="form-message"></p>
           <div id="tmdbResults" class="tmdb-results"></div>
-        </section>
-
-        <section class="okru-import-hero">
-          <div class="okru-import-title">
-            <div>
-              <p class="eyebrow">PLAYLIST DO OK.RU</p>
-              <h2>Colar o link e puxar todos os episódios</h2>
-            </div>
-            <span class="status-badge">POR LINK</span>
-          </div>
-          <p class="source-help strong-help">Cole aqui o link público da playlist/canal. Exemplo: <code>https://ok.ru/video/c23729458</code>.</p>
-          <label>Link da playlist do OK.ru
-            <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458" autocomplete="off">
-          </label>
-          <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB</label>
-          <button id="importOkruButton" class="primary-button okru-import-button" type="button">▶ Puxar todos os vídeos da playlist</button>
-          <p id="okruPlaylistMessage" class="form-message"></p>
         </section>
 
         <form id="titleForm" class="stack-form">
@@ -183,6 +184,6 @@
     </section>
   </main>
 
-  <script src="/assets/admin.js?v=20260720-3" defer></script>
+  <script src="/assets/admin.js?v=20260720-6" defer></script>
 </body>
 </html>

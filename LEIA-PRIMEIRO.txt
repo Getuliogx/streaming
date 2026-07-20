@@ -1,24 +1,43 @@
-PARA ATUALIZAR O SITE QUE VOCÊ JÁ CRIOU
+ATUALIZAÇÃO V6 — PLAYLIST OK.RU
 
-1. Extraia este ZIP.
-2. Envie TODOS os arquivos e pastas de dentro dele para o mesmo repositório do GitHub, substituindo os antigos.
-3. No Render, espere o deploy automático terminar.
-4. Abra o painel em:
-   https://SEU-SITE.onrender.com/admin
+O que foi corrigido:
+- procura todos os cartões da playlist, inclusive os carregados por paginação;
+- reconhece o formato atual do OK.ru com video-card_lk e openMovie(...);
+- usa os títulos de cada vídeo, em vez do título da série;
+- reconhece S01E01, S01E02 etc.;
+- atualiza os episódios já cadastrados sem duplicar;
+- remove o item errado criado com o próprio link da playlist;
+- mostra os episódios em cartões, separados por temporada.
 
-NÃO precisa criar PostgreSQL.
-NÃO precisa editar catalog.json.
-NÃO precisa criar variável nova no Render.
+COMO ATUALIZAR
 
-A variável TMDB_API_KEY continua sendo usada normalmente.
+1. Extraia o ZIP.
+2. Abra a pasta extraída.
+3. Selecione TUDO que está DENTRO dela, incluindo:
+   - public
+   - data
+   - pc-video-server
+   - server.js
+   - package.json
+   - package-lock.json
+   - render.yaml
+4. No repositório do GitHub, use Add file > Upload files.
+5. Arraste os arquivos e pastas selecionados.
+6. Confirme em Commit changes.
+7. No Render, use Manual Deploy > Clear build cache & deploy.
+8. Quando ficar Live, abra /admin e confira se aparece:
+   IMPORTADOR OK.RU V6.0.0
 
-PARA IMPORTAR SUA PLAYLIST DO OK.RU
+COMO IMPORTAR
 
-1. Busque a série no TMDB e clique em "Usar".
-2. Informe a temporada inicial.
-3. Abra "Importar uma playlist inteira".
-4. Cole:
+1. No TMDB, busque a série e clique em Usar.
+2. Confirme que o tipo é Episódio de série.
+3. Deixe Temporada = 1 e Episódio = 1.
+4. No quadro PLAYLIST DO OK.RU, cole:
    https://ok.ru/video/c23729458
-5. Clique em "Puxar todos do OK.ru".
+5. Clique em Puxar todos os vídeos da playlist.
 
-Leia também o arquivo CORRECAO-OKRU.txt.
+A playlist da imagem informa 26 vídeos. O painel agora mostra quantos encontrou e quantos o OK.ru informou.
+
+Não precisa de PostgreSQL.
+Não precisa criar variável nova.

@@ -1,0 +1,14 @@
+VERSÃO: 6.0.0
+
+ARQUIVOS PRINCIPAIS ALTERADOS:
+- server.js
+- public/admin.html
+- public/assets/admin.js
+- public/index.html
+- public/series.html
+- public/watch.html
+- package.json
+- package-lock.json
+
+CONFIRMAÇÃO VISUAL:
+O painel correto mostra "IMPORTADOR OK.RU V6.0.0".
