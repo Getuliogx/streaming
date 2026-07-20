@@ -1,14 +1,24 @@
 PARA ATUALIZAR O SITE QUE VOCÊ JÁ CRIOU
 
-1. Envie todos estes arquivos para o mesmo repositório do GitHub, substituindo os antigos.
+1. Extraia este ZIP.
+2. Envie TODOS os arquivos e pastas de dentro dele para o mesmo repositório do GitHub, substituindo os antigos.
+3. No Render, espere o deploy automático terminar.
+4. Abra o painel em:
+   https://SEU-SITE.onrender.com/admin
 
-2. No Render, abra Environment e adicione:
-TMDB_API_KEY = sua chave do TMDB
+NÃO precisa criar PostgreSQL.
+NÃO precisa editar catalog.json.
+NÃO precisa criar variável nova no Render.
 
-3. Salve e aguarde o novo deploy.
+A variável TMDB_API_KEY continua sendo usada normalmente.
 
-4. Entre em /admin.
+PARA IMPORTAR SUA PLAYLIST DO OK.RU
 
-Não tem PostgreSQL.
-Não precisa editar catalog.json.
-O painel continua salvando sozinho no GitHub.
+1. Busque a série no TMDB e clique em "Usar".
+2. Informe a temporada inicial.
+3. Abra "Importar uma playlist inteira".
+4. Cole:
+   https://ok.ru/video/c23729458
+5. Clique em "Puxar todos do OK.ru".
+
+Leia também o arquivo CORRECAO-OKRU.txt.

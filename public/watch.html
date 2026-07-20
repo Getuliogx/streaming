@@ -36,12 +36,29 @@
     <section id="relatedEpisodes" class="watch-episodes hidden">
       <div class="section-heading compact">
         <div>
-          <p class="eyebrow">SÉRIE</p>
-          <h2>Temporadas e episódios</h2>
+          <p class="eyebrow">CONTINUAR A SÉRIE</p>
+          <h2>Escolha outro episódio</h2>
         </div>
-        <select id="watchSeasonSelect" class="season-select" aria-label="Temporada"></select>
       </div>
-      <div id="watchEpisodeList" class="watch-episode-list"></div>
+
+      <div class="watch-switcher">
+        <label>
+          <span>Temporada</span>
+          <select id="watchSeasonSelect" class="stream-select" aria-label="Temporada"></select>
+        </label>
+        <label>
+          <span>Episódio</span>
+          <select id="watchEpisodeSelect" class="stream-select" aria-label="Episódio"></select>
+        </label>
+        <button id="watchGoEpisode" class="primary-button" type="button">▶ Abrir episódio</button>
+      </div>
+
+      <div class="episode-nav-row">
+        <a id="previousEpisode" class="ghost-button hidden" href="#">← Episódio anterior</a>
+        <a id="nextEpisode" class="ghost-button hidden" href="#">Próximo episódio →</a>
+      </div>
+
+      <div id="watchEpisodeList" class="watch-episode-cards"></div>
     </section>
 
     <div id="watchError" class="error-box hidden"></div>

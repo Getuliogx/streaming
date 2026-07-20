@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Site de streaming simples com TMDB, playlists, séries e catálogo salvo automaticamente no GitHub.",
+  "description": "Site de streaming simples com TMDB, importação completa de playlists do OK.ru, séries e catálogo salvo automaticamente no GitHub.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

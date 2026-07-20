@@ -139,16 +139,32 @@
           <p id="formMessage" class="form-message"></p>
         </form>
 
-        <details class="playlist-box">
-          <summary>Importar playlist M3U, M3U8 ou TXT</summary>
+        <details class="playlist-box" open>
+          <summary>Importar uma playlist inteira</summary>
           <div class="stack-form details-fields">
-            <p class="source-help">Escolha um arquivo de lista. As capas e o nome da série preenchidos acima podem ser aplicados em todos os itens importados.</p>
-            <label>Arquivo da playlist
-              <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
-            </label>
-            <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar capa, descrição, série e dados atuais do formulário</label>
-            <button id="importPlaylistButton" class="ghost-button" type="button">Importar playlist</button>
-            <p id="playlistMessage" class="form-message"></p>
+            <div class="import-block">
+              <strong>Playlist/canal do OK.ru por link</strong>
+              <p class="source-help">Cole o endereço da página que mostra todos os vídeos. Exemplo: <code>https://ok.ru/video/c23729458</code>. O painel procura todos os vídeos e usa o título real de cada página.</p>
+              <label>Link da playlist do OK.ru
+                <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458">
+              </label>
+              <button id="importOkruButton" class="primary-button" type="button">Puxar todos do OK.ru</button>
+              <p id="okruPlaylistMessage" class="form-message"></p>
+            </div>
+
+            <div class="import-divider"><span>OU</span></div>
+
+            <div class="import-block">
+              <strong>Arquivo M3U, M3U8 ou TXT</strong>
+              <label>Arquivo da playlist
+                <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
+              </label>
+              <button id="importPlaylistButton" class="ghost-button" type="button">Importar arquivo</button>
+              <p id="playlistMessage" class="form-message"></p>
+            </div>
+
+            <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, capa, temporada inicial e dados preenchidos acima</label>
+            <p class="source-help">Para uma série: primeiro busque a série no TMDB, clique em <b>Usar</b>, informe a temporada inicial e depois importe.</p>
           </div>
         </details>
       </aside>

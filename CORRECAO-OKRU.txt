@@ -1,0 +1,34 @@
+CORREÇÃO DA PLAYLIST DO OK.RU
+
+O link abaixo agora deve ser colocado no painel na parte:
+"Importar uma playlist inteira" -> "Playlist/canal do OK.ru por link"
+
+Exemplo:
+https://ok.ru/video/c23729458
+
+COMO USAR PARA UMA SÉRIE
+
+1. Entre em /admin.
+2. Busque a série no TMDB e clique em "Usar".
+3. Confirme que o tipo ficou como "Episódio de série".
+4. Coloque a temporada inicial e, se necessário, o primeiro número de episódio.
+5. Desça até "Importar uma playlist inteira".
+6. Cole o link do OK.ru.
+7. Clique em "Puxar todos do OK.ru".
+
+O painel agora:
+- abre a página da playlist/canal do OK.ru;
+- procura os vídeos das páginas seguintes;
+- tenta pegar o título verdadeiro de cada vídeo;
+- reconhece S01E01, 1x01, Temporada 1 Episódio 1, EP 1 e formatos parecidos;
+- usa os nomes do TMDB quando o título do OK.ru é apenas "Episódio 1" ou outro nome genérico;
+- ignora links que já estavam no catálogo.
+
+A seleção de episódios também foi refeita:
+- seletor de temporada;
+- seletor de episódio com número e título;
+- cartões visuais clicáveis;
+- episódio anterior e próximo na tela do player.
+
+IMPORTANTE
+A playlist do OK.ru precisa estar pública e abrir sem login. Se o OK.ru mudar o formato interno da página, o painel mostrará uma mensagem em vez de cadastrar links errados.

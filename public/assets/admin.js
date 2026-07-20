@@ -20,6 +20,9 @@ const tmdbType = document.querySelector('#tmdbType');
 const tmdbMessage = document.querySelector('#tmdbMessage');
 const tmdbResults = document.querySelector('#tmdbResults');
 const tmdbStatus = document.querySelector('#tmdbStatus');
+const playlistUrl = document.querySelector('#playlistUrl');
+const importOkruButton = document.querySelector('#importOkruButton');
+const okruPlaylistMessage = document.querySelector('#okruPlaylistMessage');
 const playlistFile = document.querySelector('#playlistFile');
 const playlistUseFormData = document.querySelector('#playlistUseFormData');
 const importPlaylistButton = document.querySelector('#importPlaylistButton');
@@ -284,6 +287,34 @@ tmdbResults.addEventListener('click', event => {
   useTmdbResult(button.dataset.tmdbId, button.dataset.tmdbType).catch(error => {
     setMessage(tmdbMessage, error.message, 'error');
   });
+});
+
+importOkruButton.addEventListener('click', async () => {
+  const url = playlistUrl.value.trim();
+  if (!url) {
+    setMessage(okruPlaylistMessage, 'Cole o link da playlist do OK.ru.', 'error');
+    return;
+  }
+
+  setMessage(okruPlaylistMessage, 'Procurando todos os vídeos e títulos no OK.ru… Isso pode demorar um pouco.');
+  importOkruButton.disabled = true;
+  try {
+    const defaults = playlistUseFormData.checked ? formPayload(false) : { published: true };
+    const result = await api('/api/admin/import-okru', {
+      method: 'POST',
+      body: JSON.stringify({ url, defaults })
+    });
+    setMessage(
+      okruPlaylistMessage,
+      `${result.found} vídeo(s) encontrado(s). ${result.added} adicionado(s) e ${result.skipped} repetido(s) ignorado(s).`,
+      'success'
+    );
+    await loadItems();
+  } catch (error) {
+    setMessage(okruPlaylistMessage, error.message, 'error');
+  } finally {
+    importOkruButton.disabled = false;
+  }
 });
 
 importPlaylistButton.addEventListener('click', async () => {

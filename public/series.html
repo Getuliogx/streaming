@@ -32,12 +32,25 @@
     <section class="episodes-section">
       <div class="section-heading compact">
         <div>
-          <p class="eyebrow">TEMPORADAS</p>
-          <h2>Escolha uma temporada e um episódio</h2>
+          <p class="eyebrow">EPISÓDIOS</p>
+          <h2>Escolha a temporada e o episódio</h2>
         </div>
       </div>
-      <div id="seasonTabs" class="season-tabs"></div>
-      <div id="episodeGrid" class="episode-grid"></div>
+
+      <div class="series-picker">
+        <label>
+          <span>Temporada</span>
+          <select id="seasonSelect" class="stream-select" aria-label="Escolher temporada"></select>
+        </label>
+        <label>
+          <span>Episódio</span>
+          <select id="episodeSelect" class="stream-select" aria-label="Escolher episódio"></select>
+        </label>
+        <a id="playSelectedEpisode" class="primary-button series-play-button" href="#">▶ Assistir episódio</a>
+      </div>
+
+      <div id="seasonTabs" class="season-tabs" aria-label="Temporadas"></div>
+      <div id="episodeGrid" class="episode-visual-grid"></div>
       <div id="seriesError" class="error-box hidden"></div>
     </section>
   </main>

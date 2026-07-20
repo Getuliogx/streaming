@@ -27,6 +27,9 @@ const ALLOWED_CONTENT_TYPES = new Set(['movie', 'episode']);
 const ALLOWED_SOURCE_TYPES = new Set(['okru', 'gdrive', 'direct', 'hls', 'iframe']);
 const ALLOWED_TMDB_TYPES = new Set(['movie', 'tv']);
 const MAX_PLAYLIST_ITEMS = 1500;
+const MAX_OKRU_PAGES = 30;
+const MAX_OKRU_ITEMS = 1500;
+const OKRU_TIMEOUT_MS = 20_000;
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -106,6 +109,313 @@ function detectSourceType(url) {
   if (/\.m3u8(?:$|[?#])/i.test(value)) return 'hls';
   if (/\.(?:mp4|m4v|webm|ogv|ogg|mov|mp3|m4a|aac)(?:$|[?#])/i.test(value)) return 'direct';
   return 'iframe';
+}
+
+function decodeHtmlEntities(value) {
+  const named = {
+    amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', nbsp: ' ',
+    laquo: '«', raquo: '»', hellip: '…', ndash: '–', mdash: '—'
+  };
+  return String(value || '')
+    .replace(/&#(\d+);/g, (_, number) => String.fromCodePoint(Number(number)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, number) => String.fromCodePoint(parseInt(number, 16)))
+    .replace(/&([a-z]+);/gi, (match, name) => named[name.toLowerCase()] ?? match);
+}
+
+function stripHtml(value) {
+  return decodeHtmlEntities(String(value || '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function unescapeJsonText(value) {
+  const raw = String(value || '');
+  try { return JSON.parse(`"${raw.replace(/"/g, '\\"')}"`); }
+  catch {
+    return raw
+      .replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\\//g, '/')
+      .replace(/\\n/g, ' ')
+      .replace(/\\t/g, ' ')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+}
+
+function cleanOkruTitle(value) {
+  return cleanText(stripHtml(unescapeJsonText(value)), 180)
+    .replace(/\s*[|–—-]\s*(?:OK\.?RU|Одноклассники)\s*$/i, '')
+    .replace(/^Видео\s*[:—-]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isOkruHost(hostname) {
+  return /(^|\.)ok\.ru$/i.test(String(hostname || ''));
+}
+
+function normalizeOkruUrl(value) {
+  const text = cleanText(value, 4000);
+  let url;
+  try { url = new URL(text); } catch { throw new Error('Cole um link válido do OK.ru.'); }
+  if (!['http:', 'https:'].includes(url.protocol) || !isOkruHost(url.hostname)) {
+    throw new Error('O link precisa ser do OK.ru.');
+  }
+  if (!/^\/video\//i.test(url.pathname)) {
+    throw new Error('Use um link de vídeo ou de playlist do OK.ru, como https://ok.ru/video/c123456.');
+  }
+  url.protocol = 'https:';
+  url.hash = '';
+  return url;
+}
+
+function okruMobileUrl(url) {
+  const mobile = new URL(url.toString());
+  mobile.hostname = 'm.ok.ru';
+  return mobile;
+}
+
+async function fetchOkruHtml(inputUrl) {
+  let current = new URL(inputUrl.toString());
+  for (let redirect = 0; redirect < 6; redirect += 1) {
+    if (!isOkruHost(current.hostname)) throw new Error('O OK.ru redirecionou para um endereço não permitido.');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), OKRU_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(current, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.7'
+        }
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('O OK.ru demorou demais para responder. Tente novamente.');
+      throw new Error(`Não foi possível abrir o link do OK.ru: ${error.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      current = new URL(response.headers.get('location'), current);
+      continue;
+    }
+    if (!response.ok) throw new Error(`O OK.ru recusou o acesso à playlist (${response.status}). Ela precisa ser pública.`);
+    return { html: await response.text(), finalUrl: current };
+  }
+  throw new Error('O OK.ru fez redirecionamentos demais.');
+}
+
+function extractTagAttribute(attributes, name) {
+  const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
+  const match = String(attributes || '').match(pattern);
+  return match ? (match[1] ?? match[2] ?? match[3] ?? '') : '';
+}
+
+function extractMetaContent(html, key, value) {
+  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const property = extractTagAttribute(tag, key);
+    if (property.toLowerCase() === String(value).toLowerCase()) {
+      return decodeHtmlEntities(extractTagAttribute(tag, 'content'));
+    }
+  }
+  return '';
+}
+
+function extractOkruPageTitle(html) {
+  const og = extractMetaContent(html, 'property', 'og:title') || extractMetaContent(html, 'name', 'title');
+  if (og) return cleanOkruTitle(og);
+  const title = String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+  return cleanOkruTitle(title);
+}
+
+function isGenericVideoTitle(title, id = '') {
+  const value = cleanOkruTitle(title).toLocaleLowerCase('pt-BR');
+  if (!value) return true;
+  return value === String(id) || /^(?:vídeo|video|assistir|ok\.ru)(?:\s+\d+)?$/i.test(value);
+}
+
+function parseOkruListing(html, baseUrl) {
+  const videos = new Map();
+  const pageLinks = new Set();
+  const source = String(html || '');
+
+  function addVideo(id, title = '', poster = '') {
+    if (!/^\d{6,}$/.test(String(id || ''))) return;
+    const numericId = String(id);
+    const cleaned = cleanOkruTitle(title);
+    const previous = videos.get(numericId) || { id: numericId, title: '', poster: '' };
+    if (!previous.title || isGenericVideoTitle(previous.title, numericId)) previous.title = cleaned || previous.title;
+    if (!previous.poster && poster) previous.poster = cleanHttpUrl(decodeHtmlEntities(poster), 2000);
+    videos.set(numericId, previous);
+  }
+
+  const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let anchor;
+  while ((anchor = anchorRegex.exec(source))) {
+    const attrs = anchor[1];
+    const hrefRaw = decodeHtmlEntities(extractTagAttribute(attrs, 'href'));
+    if (!hrefRaw) continue;
+    let resolved;
+    try { resolved = new URL(hrefRaw, baseUrl); } catch { continue; }
+    if (!isOkruHost(resolved.hostname)) continue;
+
+    const videoMatch = resolved.pathname.match(/^\/video(?:embed)?\/(\d{6,})(?:\/|$)/i);
+    if (videoMatch) {
+      const title = extractTagAttribute(attrs, 'data-title')
+        || extractTagAttribute(attrs, 'aria-label')
+        || extractTagAttribute(attrs, 'title')
+        || stripHtml(anchor[2]);
+      const poster = extractTagAttribute(attrs, 'data-poster') || extractTagAttribute(attrs, 'data-image');
+      addVideo(videoMatch[1], title, poster);
+      continue;
+    }
+
+    if (/^\/video\/c\d+/i.test(resolved.pathname)
+      && resolved.pathname.toLowerCase() === baseUrl.pathname.toLowerCase()
+      && resolved.search !== baseUrl.search) {
+      pageLinks.add(resolved.toString());
+    }
+  }
+
+  const jsonPatterns = [
+    /"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?[\s\S]{0,700}?"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi,
+    /"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,700}?"(?:videoId|movieId|video_id)"\s*:\s*"?(\d{6,})"?/gi
+  ];
+  let match;
+  while ((match = jsonPatterns[0].exec(source))) addVideo(match[1], match[2]);
+  while ((match = jsonPatterns[1].exec(source))) addVideo(match[2], match[1]);
+
+  const videoUrlPatterns = [
+    /\/video(?:embed)?\/(\d{6,})/gi,
+    /\\\/video(?:embed)?\\\/(\d{6,})/gi
+  ];
+  for (const pattern of videoUrlPatterns) {
+    while ((match = pattern.exec(source))) {
+      const id = match[1];
+      const after = source.slice(match.index, Math.min(source.length, match.index + 700));
+      const before = source.slice(Math.max(0, match.index - 500), match.index);
+      const nearTitle = after.match(/"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/i)?.[1]
+        || [...before.matchAll(/"(?:title|name|movieTitle)"\s*:\s*"((?:\\.|[^"\\])*)"/gi)].at(-1)?.[1]
+        || '';
+      addVideo(id, nearTitle);
+    }
+  }
+
+  return { videos, pageLinks, pageTitle: extractOkruPageTitle(source) };
+}
+
+async function mapWithConcurrency(values, limit, worker) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  async function run() {
+    while (cursor < values.length) {
+      const index = cursor++;
+      try { output[index] = await worker(values[index], index); }
+      catch { output[index] = values[index]; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, run));
+  return output;
+}
+
+async function enrichOkruVideoMetadata(entries) {
+  const missing = entries.filter(entry => isGenericVideoTitle(entry.title, entry.id));
+  if (!missing.length) return entries;
+  const enriched = await mapWithConcurrency(missing.slice(0, 150), 5, async entry => {
+    const page = await fetchOkruHtml(new URL(`https://ok.ru/video/${entry.id}`));
+    const title = extractOkruPageTitle(page.html);
+    const poster = extractMetaContent(page.html, 'property', 'og:image');
+    return {
+      ...entry,
+      title: isGenericVideoTitle(title, entry.id) ? entry.title : title,
+      poster: entry.poster || cleanHttpUrl(poster, 2000)
+    };
+  });
+  const byId = new Map(enriched.map(item => [item.id, item]));
+  return entries.map(item => byId.get(item.id) || item);
+}
+
+async function readOkruCollection(rawUrl) {
+  const original = normalizeOkruUrl(rawUrl);
+  const directVideo = original.pathname.match(/^\/video\/(\d{6,})(?:\/|$)/i);
+  if (directVideo) {
+    const page = await fetchOkruHtml(original);
+    return {
+      title: extractOkruPageTitle(page.html),
+      entries: [{
+        id: directVideo[1],
+        title: extractOkruPageTitle(page.html),
+        poster: cleanHttpUrl(extractMetaContent(page.html, 'property', 'og:image'), 2000)
+      }]
+    };
+  }
+
+  if (!/^\/video\/c\d+/i.test(original.pathname)) {
+    throw new Error('Esse endereço não parece ser uma playlist/canal do OK.ru. Use um link no formato https://ok.ru/video/c123456.');
+  }
+
+  const queue = [original, okruMobileUrl(original)];
+  const visited = new Set();
+  const videos = new Map();
+  let collectionTitle = '';
+
+  while (queue.length && visited.size < MAX_OKRU_PAGES && videos.size < MAX_OKRU_ITEMS) {
+    const current = queue.shift();
+    const key = current.toString();
+    if (visited.has(key)) continue;
+    visited.add(key);
+    let page;
+    try { page = await fetchOkruHtml(current); }
+    catch (error) {
+      if (visited.size <= 2 && !videos.size) throw error;
+      continue;
+    }
+    const parsed = parseOkruListing(page.html, page.finalUrl);
+    if (!collectionTitle && parsed.pageTitle) collectionTitle = parsed.pageTitle;
+    for (const [id, value] of parsed.videos) {
+      if (!videos.has(id) || isGenericVideoTitle(videos.get(id).title, id)) videos.set(id, value);
+    }
+    for (const link of parsed.pageLinks) {
+      if (!visited.has(link) && queue.length < MAX_OKRU_PAGES * 2) queue.push(new URL(link));
+    }
+  }
+
+  // A versão móvel costuma aceitar st.page mesmo quando o botão "próximo" é montado por JavaScript.
+  const mobileBase = okruMobileUrl(original);
+  let pagesWithoutNewItems = 0;
+  for (let pageNumber = 1; pageNumber <= MAX_OKRU_PAGES && videos.size < MAX_OKRU_ITEMS && pagesWithoutNewItems < 2; pageNumber += 1) {
+    const candidate = new URL(mobileBase.toString());
+    candidate.searchParams.set('st.page', String(pageNumber));
+    if (visited.has(candidate.toString())) continue;
+    visited.add(candidate.toString());
+    const before = videos.size;
+    try {
+      const page = await fetchOkruHtml(candidate);
+      const parsed = parseOkruListing(page.html, page.finalUrl);
+      for (const [id, value] of parsed.videos) {
+        if (!videos.has(id) || isGenericVideoTitle(videos.get(id).title, id)) videos.set(id, value);
+      }
+    } catch {
+      pagesWithoutNewItems += 1;
+      continue;
+    }
+    pagesWithoutNewItems = videos.size === before ? pagesWithoutNewItems + 1 : 0;
+  }
+
+  if (!videos.size) {
+    throw new Error('Não encontrei vídeos nessa playlist do OK.ru. Ela precisa estar pública e visível sem login.');
+  }
+
+  const entries = await enrichOkruVideoMetadata([...videos.values()].slice(0, MAX_OKRU_ITEMS));
+  return { title: collectionTitle, entries };
 }
 
 function normalizeTitle(body) {
@@ -383,24 +693,135 @@ function parseM3UAttributes(line) {
   return attributes;
 }
 
-function parseEpisodeInfo(rawTitle) {
-  const title = cleanText(rawTitle, 180);
+function parseEpisodeInfo(rawTitle, knownSeriesTitle = '') {
+  const title = cleanOkruTitle(rawTitle);
   const patterns = [
-    /\bS(\d{1,3})\s*E(\d{1,4})\b/i,
-    /\b(\d{1,3})\s*x\s*(\d{1,4})\b/i,
-    /\bT(?:EMPORADA)?\s*(\d{1,3}).{0,12}\bE(?:P(?:IS[ÓO]DIO)?)?\s*(\d{1,4})\b/i
+    /\bS(?:EASON)?\s*0*(\d{1,3})\s*[._ -]*E(?:P(?:ISODE|IS[ÓO]DIO)?)?\s*0*(\d{1,4})\b/i,
+    /\b0*(\d{1,3})\s*x\s*0*(\d{1,4})\b/i,
+    /\bT(?:EMPORADA)?\s*0*(\d{1,3})\s*[._ -]*(?:E|EP|EPIS[ÓO]DIO)\s*0*(\d{1,4})\b/i,
+    /\b0*(\d{1,3})[ªº]?\s*TEMPORADA.{0,20}?0*(\d{1,4})[ºª]?\s*(?:EPIS[ÓO]DIO|EP)\b/i,
+    /\bTEMPORADA\s*0*(\d{1,3}).{0,20}?EPIS[ÓO]DIO\s*0*(\d{1,4})\b/i
   ];
   const match = patterns.map(pattern => title.match(pattern)).find(Boolean);
-  if (!match) return null;
 
-  const before = title.slice(0, match.index).replace(/[._\-–—]+/g, ' ').trim();
-  const after = title.slice((match.index || 0) + match[0].length).replace(/^[\s._\-–—:]+/, '').trim();
-  return {
-    seriesTitle: before,
-    season: Number(match[1]),
-    episode: Number(match[2]),
-    episodeTitle: after || `Episódio ${Number(match[2])}`
+  let season = null;
+  let episode = null;
+  let markerStart = -1;
+  let markerLength = 0;
+
+  if (match) {
+    season = Number(match[1]);
+    episode = Number(match[2]);
+    markerStart = match.index || 0;
+    markerLength = match[0].length;
+  } else {
+    const episodeOnlyPatterns = [
+      /\b(?:EP|EP\.|EPIS[ÓO]DIO|CAP[ÍI]TULO)\s*0*(\d{1,4})\b/i,
+      /\b0*(\d{1,4})[ºª]?\s*EPIS[ÓO]DIO\b/i
+    ];
+    const episodeOnly = episodeOnlyPatterns.map(pattern => title.match(pattern)).find(Boolean);
+    if (episodeOnly) {
+      episode = Number(episodeOnly[1]);
+      markerStart = episodeOnly.index || 0;
+      markerLength = episodeOnly[0].length;
+    }
+  }
+
+  if (episode === null) return null;
+
+  let before = title.slice(0, markerStart).replace(/[._\-–—:|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let after = title.slice(markerStart + markerLength).replace(/^[\s._\-–—:|]+/, '').trim();
+  const known = cleanText(knownSeriesTitle, 180);
+  if (known && before.toLocaleLowerCase('pt-BR').startsWith(known.toLocaleLowerCase('pt-BR'))) {
+    before = before.slice(known.length).replace(/^[\s._\-–—:|]+/, '').trim();
+  }
+  const seriesTitle = known || before;
+  const episodeTitle = after || (before && !known ? '' : `Episódio ${episode}`);
+
+  return { seriesTitle, season, episode, episodeTitle };
+}
+
+function removeSeriesPrefix(title, seriesTitle) {
+  const raw = cleanOkruTitle(title);
+  const series = cleanText(seriesTitle, 180);
+  if (!series) return raw;
+  const escaped = series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return raw.replace(new RegExp(`^${escaped}\\s*(?:[-–—:|]\\s*)?`, 'i'), '').trim() || raw;
+}
+
+function buildRecordsFromOkru(entries, defaults = {}, collectionTitle = '') {
+  const defaultSeries = cleanText(defaults.series_title, 180);
+  const inferredCollectionTitle = cleanOkruTitle(collectionTitle)
+    .replace(/\s*(?:vídeos?|video|playlist|canal)\s*$/i, '')
+    .trim();
+  const contentTypeRequested = cleanText(defaults.content_type, 20);
+  const treatAsSeries = Boolean(defaultSeries || contentTypeRequested === 'episode');
+  const fallbackSeries = defaultSeries || (treatAsSeries ? inferredCollectionTitle : '');
+  const defaultSeason = cleanNullableInt(defaults.season) ?? 1;
+  const firstEpisode = cleanNullableInt(defaults.episode) ?? 1;
+  const common = {
+    description: cleanText(defaults.description, 5000),
+    year: cleanNullableInt(defaults.year),
+    genres: cleanText(defaults.genres, 300),
+    cover_url: cleanHttpUrl(defaults.cover_url, 2000),
+    backdrop_url: cleanHttpUrl(defaults.backdrop_url, 2000),
+    tmdb_id: cleanNullableInt(defaults.tmdb_id),
+    tmdb_type: ALLOWED_TMDB_TYPES.has(cleanText(defaults.tmdb_type, 20)) ? cleanText(defaults.tmdb_type, 20) : '',
+    featured: false,
+    published: defaults.published !== false
   };
+
+  return entries.map((entry, index) => {
+    const rawTitle = cleanOkruTitle(entry.title) || `Vídeo ${index + 1}`;
+    const info = parseEpisodeInfo(rawTitle, fallbackSeries);
+    const isEpisode = treatAsSeries || Boolean(info?.seriesTitle);
+    const seriesTitle = isEpisode ? (fallbackSeries || info?.seriesTitle || inferredCollectionTitle) : '';
+    const season = isEpisode ? (info?.season ?? defaultSeason) : null;
+    const episode = isEpisode ? (info?.episode ?? (firstEpisode + index)) : null;
+    let title = rawTitle;
+    if (isEpisode) {
+      title = cleanOkruTitle(info?.episodeTitle || removeSeriesPrefix(rawTitle, seriesTitle));
+      if (!title || title === rawTitle && isGenericVideoTitle(title, entry.id)) title = `Episódio ${episode}`;
+    }
+
+    return normalizeTitle({
+      ...common,
+      title,
+      series_title: seriesTitle,
+      content_type: isEpisode && seriesTitle ? 'episode' : 'movie',
+      season,
+      episode,
+      source_url: `https://ok.ru/video/${entry.id}`,
+      source_type: 'okru',
+      cover_url: common.cover_url || cleanHttpUrl(entry.poster, 2000)
+    });
+  });
+}
+
+async function enrichEpisodeRecordsWithTmdb(records) {
+  if (!HAS_TMDB || !records.length) return records;
+  const sample = records.find(record => record.tmdb_type === 'tv' && record.tmdb_id && record.content_type === 'episode');
+  if (!sample) return records;
+  const seasons = [...new Set(records.map(record => record.season).filter(Number.isInteger))];
+  const episodeData = new Map();
+  await mapWithConcurrency(seasons, 3, async season => {
+    try {
+      const data = await tmdbRequest(`/tv/${sample.tmdb_id}/season/${season}`);
+      for (const episode of data.episodes || []) {
+        episodeData.set(`${season}:${episode.episode_number}`, episode);
+      }
+    } catch {}
+  });
+  return records.map(record => {
+    const tmdbEpisode = episodeData.get(`${record.season}:${record.episode}`);
+    if (!tmdbEpisode) return record;
+    const generic = isGenericVideoTitle(record.title) || /^Episódio\s+\d+$/i.test(record.title);
+    return {
+      ...record,
+      title: generic && tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : record.title,
+      description: record.description || cleanText(tmdbEpisode.overview, 5000)
+    };
+  });
 }
 
 function parsePlaylist(content, defaults = {}) {
@@ -453,20 +874,26 @@ function parsePlaylist(content, defaults = {}) {
     published: defaults.published !== false
   };
 
+  const defaultSeason = cleanNullableInt(defaults.season) ?? (defaultSeries ? 1 : null);
+  const firstEpisode = cleanNullableInt(defaults.episode) ?? 1;
+
   return entries.map((entry, index) => {
-    const rawTitle = entry.title || `Vídeo ${index + 1}`;
-    const episodeInfo = parseEpisodeInfo(rawTitle);
+    const rawTitle = cleanOkruTitle(entry.title || `Vídeo ${index + 1}`);
+    const episodeInfo = parseEpisodeInfo(rawTitle, defaultSeries);
     const isEpisode = Boolean(defaultSeries || episodeInfo || defaultContentType === 'episode');
     const seriesTitle = defaultSeries || episodeInfo?.seriesTitle || '';
     const contentType = isEpisode && seriesTitle ? 'episode' : 'movie';
+    const episodeNumber = episodeInfo?.episode ?? (defaultSeries ? firstEpisode + index : null);
+    const episodeTitle = cleanOkruTitle(episodeInfo?.episodeTitle || removeSeriesPrefix(rawTitle, seriesTitle))
+      || (episodeNumber !== null ? `Episódio ${episodeNumber}` : rawTitle);
 
     return normalizeTitle({
       ...defaultRecord,
-      title: contentType === 'episode' ? (episodeInfo?.episodeTitle || rawTitle) : rawTitle,
+      title: contentType === 'episode' ? episodeTitle : rawTitle,
       series_title: contentType === 'episode' ? seriesTitle : '',
       content_type: contentType,
-      season: contentType === 'episode' ? (episodeInfo?.season ?? cleanNullableInt(defaults.season) ?? (defaultSeries ? 1 : null)) : null,
-      episode: contentType === 'episode' ? (episodeInfo?.episode ?? (defaultSeries ? index + 1 : null)) : null,
+      season: contentType === 'episode' ? (episodeInfo?.season ?? defaultSeason) : null,
+      episode: contentType === 'episode' ? episodeNumber : null,
       genres: defaultRecord.genres || entry.group_title,
       cover_url: defaultRecord.cover_url || entry.cover_url,
       source_url: entry.source_url,
@@ -637,11 +1064,33 @@ app.post('/api/admin/titles', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-playlist', requireAdmin, async (req, res, next) => {
   try {
-    const records = parsePlaylist(req.body.content, req.body.defaults || {});
+    let records = parsePlaylist(req.body.content, req.body.defaults || {});
+    records = await enrichEpisodeRecordsWithTmdb(records);
     const result = await createManyTitles(records);
     res.status(201).json({ ...result, parsed: records.length });
   } catch (error) {
     if (/playlist|Nenhum|link|Digite|Cole|inválido|série/i.test(error.message)) {
+      return res.status(400).json({ error: error.message });
+    }
+    next(error);
+  }
+});
+
+app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
+  try {
+    const defaults = req.body.defaults || {};
+    const collection = await readOkruCollection(req.body.url);
+    let records = buildRecordsFromOkru(collection.entries, defaults, collection.title);
+    records = await enrichEpisodeRecordsWithTmdb(records);
+    const result = await createManyTitles(records);
+    res.status(201).json({
+      ...result,
+      parsed: records.length,
+      playlist_title: collection.title || '',
+      found: collection.entries.length
+    });
+  } catch (error) {
+    if (/OK\.ru|playlist|canal|link|pública|vídeo|endereço|recusou|demorou/i.test(error.message)) {
       return res.status(400).json({ error: error.message });
     }
     next(error);
@@ -697,7 +1146,18 @@ async function start() {
   app.listen(PORT, '0.0.0.0', () => console.log(`Site aberto na porta ${PORT}`));
 }
 
-start().catch(error => {
-  console.error('Falha ao iniciar:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch(error => {
+    console.error('Falha ao iniciar:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  app,
+  parseEpisodeInfo,
+  parseOkruListing,
+  buildRecordsFromOkru,
+  parsePlaylist,
+  extractOkruPageTitle
+};

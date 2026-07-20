@@ -1,79 +1,106 @@
-# Minha Stream — TMDB, playlists e séries
+# Minha Stream Simples 4.0
 
-Esta versão continua sem PostgreSQL. O catálogo é salvo automaticamente no GitHub pelo painel.
+Site de catálogo e reprodução com painel administrativo. Não usa PostgreSQL e não exige edição manual de `catalog.json`.
 
-## O que foi adicionado
+## O que esta versão corrige
 
-- busca no TMDB para preencher capa, imagem de fundo, descrição, ano e gêneros;
-- importação de arquivos `.m3u`, `.m3u8` e `.txt` pelo painel;
-- séries agrupadas em uma única capa no catálogo;
-- página de série com escolha de temporada e episódio;
-- lista de temporadas e episódios também abaixo do player;
-- OK.ru, Google Drive, HLS/M3U8, vídeo direto e sites que aceitam incorporação por iframe.
+- Importação de playlist/canal do OK.ru por link, inclusive links no formato `https://ok.ru/video/c23729458`.
+- Busca dos vídeos nas páginas seguintes da lista.
+- Leitura do título real de cada vídeo do OK.ru.
+- Reconhecimento de formatos como `S01E01`, `1x01`, `Temporada 1 Episódio 1`, `EP 1` e semelhantes.
+- Uso opcional do TMDB para substituir títulos genéricos como “Episódio 1”.
+- Nova tela de série com seletor de temporada, seletor de episódio e cartões visuais.
+- Nova troca de episódios no player, com anterior e próximo.
 
-## Atualizar o site que já está no Render
+## Como funciona
 
-1. Envie todos os arquivos desta pasta para o mesmo repositório do GitHub e confirme a substituição dos arquivos antigos.
-2. No Render, abra o seu Web Service.
-3. Entre em **Environment**.
-4. Adicione:
+1. O código fica no GitHub.
+2. O site roda no Render.
+3. Você entra em `/admin`.
+4. Ao salvar ou importar, o catálogo é gravado automaticamente no ramo `catalogo` do seu repositório.
 
-```text
-TMDB_API_KEY = sua chave API do TMDB
-```
+O ramo `catalogo` é criado automaticamente e fica separado do ramo principal. Adicionar vídeos não provoca novo deploy.
 
-5. Salve. O Render fará um novo deploy. Caso não faça, use **Manual Deploy → Deploy latest commit**.
-
-As variáveis que você já configurou continuam iguais:
+## Variáveis do Render
 
 ```text
 ADMIN_PASSWORD = sua senha do painel
 GITHUB_TOKEN = seu token do GitHub
-GITHUB_REPO = usuario/repositorio
+GITHUB_REPO = usuario/nome-do-repositorio
 NODE_ENV = production
+TMDB_API_KEY = sua chave do TMDB
 ```
 
-Não precisa de banco de dados.
+Não coloque `https://github.com/` em `GITHUB_REPO`. Use apenas `usuario/repositorio`.
 
-## Adicionar capa pelo TMDB
+## Atualizar um site já criado
 
-1. Abra `https://SEU-SITE.onrender.com/admin`.
-2. Entre com sua senha.
-3. Em **Buscar capa e dados no TMDB**, escreva o nome do filme ou série.
-4. Clique em **Buscar** e depois em **Usar** no resultado certo.
-5. Cole o link do vídeo e clique em **Salvar**.
+1. Extraia o ZIP.
+2. Envie todos os arquivos e pastas para o mesmo repositório do GitHub, substituindo os antigos.
+3. Aguarde o deploy automático do Render.
+4. Abra `https://SEU-SITE.onrender.com/admin`.
 
-Ao escolher uma série no TMDB, o formulário muda para episódio e preenche o nome da série. Informe temporada, episódio e o link do vídeo.
+Não é preciso criar PostgreSQL nem variável nova.
 
-## Importar uma playlist
+## Importar uma playlist do OK.ru
 
-1. No painel, preencha antes a capa e o nome da série, caso todos os links sejam da mesma série.
-2. Abra **Importar playlist M3U, M3U8 ou TXT**.
-3. Selecione o arquivo.
-4. Deixe marcada a opção para usar os dados do formulário.
-5. Clique em **Importar playlist**.
+Para importar uma série:
 
-O importador reconhece nomes como:
+1. No painel, pesquise a série no TMDB e clique em **Usar**.
+2. Confirme que o tipo ficou como **Episódio de série**.
+3. Informe a temporada inicial e, se necessário, o primeiro episódio.
+4. Abra **Importar uma playlist inteira**.
+5. Cole um link como:
 
 ```text
-Minha Série S01E01 - Piloto
-Minha Série 1x02 - Segundo episódio
+https://ok.ru/video/c23729458
 ```
 
-Quando você preenche o nome da série no formulário e a playlist não contém números, os itens são importados na ordem como Temporada 1, Episódios 1, 2, 3 e assim por diante.
+6. Clique em **Puxar todos do OK.ru**.
 
-Arquivos HLS que contêm apenas os segmentos de um único vídeo não são importados como catálogo. Nesse caso, cadastre o link `.m3u8` diretamente no campo **Link do vídeo**.
+O importador tenta acessar a versão normal e a versão móvel do OK.ru, procura páginas seguintes, remove links repetidos e salva cada vídeo como um episódio separado.
 
-## Links e sites aceitos
+A lista precisa ser pública e abrir sem login. Como o OK.ru pode mudar o HTML da página, o importador mostra um erro quando não consegue identificar os vídeos em vez de cadastrar links aleatórios.
 
-- OK.ru;
-- Google Drive;
-- link direto MP4/WebM e servidor do PC;
-- HLS `.m3u8`;
-- página ou player de outro site usando **Site incorporado / iframe**.
+## Arquivos M3U, M3U8 e TXT
 
-Não existe suporte literal a qualquer site. Alguns sites bloqueiam iframe com `X-Frame-Options` ou `Content-Security-Policy`; nesse caso, o navegador impede a exibição e o site precisa fornecer um link oficial de incorporação. HLS também precisa permitir CORS. O projeto não remove DRM nem contorna bloqueios.
+Também é possível enviar um arquivo de playlist. Para séries, preencha primeiro o nome da série, a temporada inicial e o episódio inicial. O painel usa esses valores nos itens que não possuem numeração no título.
 
-Use somente conteúdo próprio ou que você tenha autorização para exibir.
+## Fontes aceitas
 
-Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB.
+- OK.ru: vídeo individual, `videoembed` e playlist/canal por link.
+- Google Drive: link de compartilhamento.
+- Servidor do PC: link público de vídeo.
+- HLS: link `.m3u8`.
+- Sites externos: somente quando permitem incorporação por iframe.
+
+O sistema não remove DRM nem bloqueios de incorporação.
+
+## Vídeos do seu PC
+
+O Render não consegue abrir caminhos como `C:\Filmes\filme.mp4`. Execute o servidor da pasta `pc-video-server` e publique um endereço HTTPS. Veja `pc-video-server/README-PC.md`.
+
+O computador precisa ficar ligado durante a reprodução.
+
+## Teste local
+
+```bash
+npm install
+npm start
+```
+
+Abra:
+
+```text
+http://localhost:10000
+http://localhost:10000/admin
+```
+
+Sem `GITHUB_TOKEN` e `GITHUB_REPO`, o projeto usa `data/catalog.json` apenas para testes locais.
+
+## Segurança
+
+- Nunca coloque o token dentro dos arquivos do GitHub.
+- Guarde o token somente nas variáveis do Render.
+- Use uma senha forte em `ADMIN_PASSWORD`.
+- Disponibilize apenas conteúdo que você tenha autorização para publicar.

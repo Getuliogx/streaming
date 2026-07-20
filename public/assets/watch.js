@@ -9,7 +9,11 @@ const watchError = document.querySelector('#watchError');
 const favoriteButton = document.querySelector('#favoriteButton');
 const relatedEpisodes = document.querySelector('#relatedEpisodes');
 const watchSeasonSelect = document.querySelector('#watchSeasonSelect');
+const watchEpisodeSelect = document.querySelector('#watchEpisodeSelect');
+const watchGoEpisode = document.querySelector('#watchGoEpisode');
 const watchEpisodeList = document.querySelector('#watchEpisodeList');
+const previousEpisode = document.querySelector('#previousEpisode');
+const nextEpisode = document.querySelector('#nextEpisode');
 const seriesBackButton = document.querySelector('#seriesBackButton');
 
 const params = new URLSearchParams(location.search);
@@ -108,20 +112,72 @@ function addToHistory(item) {
   localStorage.setItem('streamHistory', JSON.stringify(history.slice(0, 50)));
 }
 
+function seasonKey(value) {
+  return value === null || value === undefined ? 'null' : String(value);
+}
+
 function seasonLabel(value) {
   if (value === null || value === undefined) return 'Sem temporada';
   if (Number(value) === 0) return 'Especiais';
   return `Temporada ${value}`;
 }
 
-function renderWatchEpisodes(seasonValue) {
+function episodeLabel(item) {
+  const number = item.episode !== null && item.episode !== undefined ? `Episódio ${item.episode}` : 'Episódio';
+  return item.title ? `${number} — ${item.title}` : number;
+}
+
+function updateEpisodeButton() {
+  const selectedId = Number(watchEpisodeSelect.value);
+  watchGoEpisode.disabled = !Number.isInteger(selectedId) || selectedId < 1 || selectedId === id;
+  watchGoEpisode.textContent = selectedId === id ? '▶ Episódio atual' : '▶ Abrir episódio';
+}
+
+function renderWatchEpisodes(seasonValue, preferredId = null) {
   const season = seasonValue === 'null' ? null : Number(seasonValue);
   const filtered = seriesEpisodes.filter(item => (item.season ?? null) === season);
-  watchEpisodeList.innerHTML = filtered.map(item => `
-    <a class="watch-episode-link ${Number(item.id) === id ? 'active' : ''}" href="/watch.html?id=${item.id}">
-      <span>${item.episode !== null && item.episode !== undefined ? `E${item.episode}` : 'EP'}</span>
-      <strong>${escapeHtml(item.title)}</strong>
-    </a>`).join('');
+
+  watchEpisodeSelect.innerHTML = filtered.map(item => `
+    <option value="${item.id}">${escapeHtml(episodeLabel(item))}</option>`).join('');
+
+  const preferred = filtered.find(item => Number(item.id) === Number(preferredId))
+    || filtered.find(item => Number(item.id) === id)
+    || filtered[0];
+  if (preferred) watchEpisodeSelect.value = String(preferred.id);
+  updateEpisodeButton();
+
+  watchEpisodeList.innerHTML = filtered.map(item => {
+    const active = Number(item.id) === id;
+    const image = item.backdrop_url || item.cover_url || '';
+    const number = item.episode !== null && item.episode !== undefined ? `E${item.episode}` : 'EP';
+    const thumb = image
+      ? `<img src="${escapeHtml(image)}" alt="" loading="lazy">`
+      : `<div class="episode-thumb-placeholder">${escapeHtml(number)}</div>`;
+
+    return `
+      <a class="watch-episode-card ${active ? 'active' : ''}" href="/watch.html?id=${item.id}">
+        <div class="watch-episode-thumb">
+          ${thumb}
+          <span>${active ? 'ASSISTINDO' : number}</span>
+          <b>▶</b>
+        </div>
+        <div>
+          <small>${escapeHtml(seasonLabel(item.season))} • ${escapeHtml(item.episode !== null && item.episode !== undefined ? `Episódio ${item.episode}` : 'Episódio')}</small>
+          <strong>${escapeHtml(item.title || `Episódio ${item.episode ?? ''}`)}</strong>
+        </div>
+      </a>`;
+  }).join('');
+}
+
+function updatePreviousNext() {
+  const index = seriesEpisodes.findIndex(item => Number(item.id) === id);
+  const previous = index > 0 ? seriesEpisodes[index - 1] : null;
+  const next = index >= 0 && index < seriesEpisodes.length - 1 ? seriesEpisodes[index + 1] : null;
+
+  previousEpisode.classList.toggle('hidden', !previous);
+  nextEpisode.classList.toggle('hidden', !next);
+  if (previous) previousEpisode.href = `/watch.html?id=${previous.id}`;
+  if (next) nextEpisode.href = `/watch.html?id=${next.id}`;
 }
 
 async function loadRelatedEpisodes(seriesTitle) {
@@ -129,15 +185,22 @@ async function loadRelatedEpisodes(seriesTitle) {
     const response = await fetch(`/api/series?title=${encodeURIComponent(seriesTitle)}`);
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || 'Não foi possível carregar os episódios.');
-    seriesEpisodes = body.episodes || [];
+
+    seriesEpisodes = (body.episodes || []).sort((a, b) => (Number(a.season) || 0) - (Number(b.season) || 0)
+      || (Number(a.episode) || 0) - (Number(b.episode) || 0)
+      || Number(a.id) - Number(b.id));
+
     const seasons = [...new Set(seriesEpisodes.map(item => item.season ?? null))]
       .sort((a, b) => (a ?? -1) - (b ?? -1));
     const currentSeason = currentItem.season ?? null;
+
     watchSeasonSelect.innerHTML = seasons.map(season => `
-      <option value="${season === null ? 'null' : season}" ${season === currentSeason ? 'selected' : ''}>${escapeHtml(seasonLabel(season))}</option>`).join('');
-    renderWatchEpisodes(currentSeason === null ? 'null' : String(currentSeason));
+      <option value="${seasonKey(season)}" ${season === currentSeason ? 'selected' : ''}>${escapeHtml(seasonLabel(season))}</option>`).join('');
+
+    renderWatchEpisodes(seasonKey(currentSeason), id);
+    updatePreviousNext();
     relatedEpisodes.classList.remove('hidden');
-    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${currentSeason ?? ''}`;
+    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${currentSeason ?? ''}&episode=${id}`;
     seriesBackButton.classList.remove('hidden');
   } catch (error) {
     console.error(error);
@@ -152,20 +215,28 @@ favoriteButton.addEventListener('click', () => {
 });
 
 watchSeasonSelect.addEventListener('change', () => renderWatchEpisodes(watchSeasonSelect.value));
+watchEpisodeSelect.addEventListener('change', updateEpisodeButton);
+watchGoEpisode.addEventListener('click', () => {
+  const selectedId = Number(watchEpisodeSelect.value);
+  if (Number.isInteger(selectedId) && selectedId > 0 && selectedId !== id) location.href = `/watch.html?id=${selectedId}`;
+});
 
 async function loadItem() {
   if (!Number.isInteger(id) || id < 1) {
     showError('Link de conteúdo inválido.');
     return;
   }
+
   try {
     const response = await fetch(`/api/catalog/${id}`);
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || 'Conteúdo não encontrado.');
+
     currentItem = body;
     document.title = `${body.title} | Minha Stream`;
     watchTitle.textContent = body.title;
     watchEyebrow.textContent = body.series_title || (body.content_type === 'episode' ? 'EPISÓDIO' : 'FILME / VÍDEO');
+
     const meta = [];
     if (body.year) meta.push(body.year);
     if (body.season !== null && body.season !== undefined) meta.push(`Temporada ${body.season}`);
@@ -173,6 +244,7 @@ async function loadItem() {
     if (body.genres) meta.push(body.genres);
     watchMeta.textContent = meta.join(' • ');
     watchDescription.textContent = body.description || 'Sem descrição.';
+
     mountPlayer(body);
     addToHistory(body);
     updateFavoriteButton();
