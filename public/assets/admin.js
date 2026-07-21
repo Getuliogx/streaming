@@ -21,8 +21,8 @@ const tmdbMessage = document.querySelector('#tmdbMessage');
 const tmdbResults = document.querySelector('#tmdbResults');
 const tmdbStatus = document.querySelector('#tmdbStatus');
 const playlistUrl = document.querySelector('#playlistUrl');
-const importOkruButton = document.querySelector('#importOkruButton');
-const okruPlaylistMessage = document.querySelector('#okruPlaylistMessage');
+const importUrlButton = document.querySelector('#importUrlButton');
+const playlistUrlMessage = document.querySelector('#playlistUrlMessage');
 const playlistFile = document.querySelector('#playlistFile');
 const playlistUseFormData = document.querySelector('#playlistUseFormData');
 const importPlaylistButton = document.querySelector('#importPlaylistButton');
@@ -236,7 +236,7 @@ loginForm.addEventListener('submit', async event => {
     showAdmin(session);
     try {
       const build = await api('/api/admin/importer-version');
-      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR OK.RU V${build.version}`;
+      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR UNIVERSAL V${build.version}`;
     } catch {}
     await loadItems();
   } catch (error) {
@@ -297,35 +297,36 @@ tmdbResults.addEventListener('click', event => {
   });
 });
 
-importOkruButton.addEventListener('click', async () => {
+importUrlButton.addEventListener('click', async () => {
   const url = playlistUrl.value.trim();
   if (!url) {
-    setMessage(okruPlaylistMessage, 'Cole o link da playlist do OK.ru.', 'error');
+    setMessage(playlistUrlMessage, 'Cole o link da playlist, página ou feed.', 'error');
     return;
   }
 
-  setMessage(okruPlaylistMessage, 'Procurando todos os vídeos e títulos no OK.ru… Isso pode demorar um pouco.');
-  importOkruButton.disabled = true;
+  setMessage(playlistUrlMessage, 'Abrindo o link e procurando todos os vídeos… Isso pode demorar um pouco.');
+  importUrlButton.disabled = true;
   try {
     const defaults = playlistUseFormData.checked ? formPayload(false) : { published: true };
-    const result = await api('/api/admin/import-okru', {
+    const result = await api('/api/admin/import-url', {
       method: 'POST',
       body: JSON.stringify({ url, defaults })
     });
     const expectedText = result.expected ? ` de ${result.expected}` : '';
-    const completeText = result.complete === false
-      ? ` O OK.ru informou ${result.expected}, mas liberou ${result.found} para o servidor. Tente novamente uma vez; os já encontrados serão atualizados sem duplicar.`
-      : ' Importação completa.';
+    const pageText = result.pages ? ` em ${result.pages} página(s)` : '';
+    const incompleteText = result.complete === false
+      ? ' A página ainda indicou mais resultados, mas o limite seguro de leitura foi atingido. Importe novamente para atualizar sem duplicar.'
+      : '';
     setMessage(
-      okruPlaylistMessage,
-      `${result.found}${expectedText} vídeo(s) encontrado(s). ${result.added} novo(s), ${result.updated || 0} atualizado(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} repetido(s).${completeText}`,
+      playlistUrlMessage,
+      `${result.found}${expectedText} vídeo(s) encontrado(s)${pageText}. Formato: ${result.format}. ${result.added} novo(s), ${result.updated || 0} atualizado(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} repetido(s).${incompleteText}`,
       result.complete === false ? 'error' : 'success'
     );
     await loadItems();
   } catch (error) {
-    setMessage(okruPlaylistMessage, error.message, 'error');
+    setMessage(playlistUrlMessage, error.message, 'error');
   } finally {
-    importOkruButton.disabled = false;
+    importUrlButton.disabled = false;
   }
 });
 
@@ -370,7 +371,7 @@ importPlaylistButton.addEventListener('click', async () => {
     showAdmin(session);
     try {
       const build = await api('/api/admin/importer-version');
-      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR OK.RU V${build.version}`;
+      if (importerBuildBadge) importerBuildBadge.textContent = `IMPORTADOR UNIVERSAL V${build.version}`;
     } catch {}
     await loadItems();
   } catch (error) {

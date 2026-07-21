@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "private": true,
-  "description": "Site de streaming simples com filmes e séries separados, categorias, gêneros, A-Z, TMDB e playlists do OK.ru.",
+  "description": "Site de streaming simples com importador universal de playlists por link, filmes e séries separados, categorias, gêneros, A-Z e TMDB.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -1,0 +1,24 @@
+ATUALIZAÇÃO V9 — IMPORTADOR UNIVERSAL POR LINK
+
+O campo de playlist agora aceita:
+- playlist/canal público do OK.ru;
+- link de arquivo M3U, M3U8 ou TXT;
+- feed JSON;
+- feed RSS ou XML;
+- página pública que mostre links, players ou vídeos no HTML;
+- link direto de vídeo ou HLS.
+
+COMO ATUALIZAR
+1. Extraia este ZIP.
+2. Envie os arquivos para a raiz do repositório Getuliogx/streaming, substituindo os antigos.
+3. Aguarde a Oracle atualizar automaticamente ou reinicie o serviço.
+4. Abra /admin e confirme que aparece: IMPORTADOR UNIVERSAL V9.0.0.
+
+COMO USAR
+1. Para séries, procure a série no TMDB e clique em Usar.
+2. Deixe marcada a opção de usar os dados do formulário.
+3. Cole o link no quadro PLAYLIST POR LINK.
+4. Clique em Importar todos os vídeos encontrados.
+
+LIMITES REAIS
+Não existe um método capaz de ler literalmente todos os sites. A importação automática depende de a página ser pública e expor os links no HTML, M3U, JSON, RSS ou XML. Sites que exigem login, usam DRM, bloqueiam o servidor ou carregam a lista somente por JavaScript podem não funcionar.

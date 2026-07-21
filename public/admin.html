@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Painel | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260720-8">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260721-9">
 </head>
 <body>
   <header class="topbar">
@@ -36,26 +36,27 @@
           <div>
             <p class="eyebrow">CADASTRO</p>
             <h1 id="formHeading">Adicionar conteúdo</h1>
-            <span id="importerBuildBadge" class="build-badge">IMPORTADOR OK.RU V8</span>
+            <span id="importerBuildBadge" class="build-badge">IMPORTADOR UNIVERSAL V9</span>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
 
-        <section id="okruImporter" class="okru-import-hero">
+        <section id="universalImporter" class="okru-import-hero">
           <div class="okru-import-title">
             <div>
-              <p class="eyebrow">PLAYLIST DO OK.RU</p>
-              <h2>Colar o link e puxar todos os episódios</h2>
+              <p class="eyebrow">PLAYLIST POR LINK</p>
+              <h2>Importar de qualquer site público sem DRM</h2>
             </div>
             <span class="status-badge">POR LINK</span>
           </div>
-          <p class="source-help strong-help">Cole aqui o link público da playlist/canal. Exemplo: <code>https://ok.ru/video/c23729458</code>.</p>
-          <label>Link da playlist do OK.ru
-            <input id="playlistUrl" type="url" placeholder="https://ok.ru/video/c23729458" autocomplete="off">
+          <p class="source-help strong-help">Cole o link de uma playlist, página, canal ou feed público. Aceita OK.ru, M3U/M3U8/TXT por URL, JSON, RSS/XML e páginas que exibem links de vídeo no HTML.</p>
+          <label>Link da playlist, página ou feed
+            <input id="playlistUrl" type="url" placeholder="https://site.com/playlist-ou-pagina" autocomplete="off">
           </label>
           <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB</label>
-          <button id="importOkruButton" class="primary-button okru-import-button" type="button">▶ Puxar todos os vídeos da playlist</button>
-          <p id="okruPlaylistMessage" class="form-message"></p>
+          <button id="importUrlButton" class="primary-button okru-import-button" type="button">▶ Importar todos os vídeos encontrados</button>
+          <p id="playlistUrlMessage" class="form-message"></p>
+          <p class="source-help">Páginas que exigem login, carregam a lista apenas por JavaScript, bloqueiam robôs ou usam DRM podem não permitir importação automática.</p>
         </section>
 
 
@@ -164,7 +165,7 @@
         </form>
 
         <details class="playlist-box">
-          <summary>Importar arquivo M3U, M3U8 ou TXT</summary>
+          <summary>Importar arquivo M3U, M3U8 ou TXT do computador</summary>
           <div class="stack-form details-fields">
             <label>Arquivo da playlist
               <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
@@ -189,6 +190,6 @@
     </section>
   </main>
 
-  <script src="/assets/admin.js?v=20260720-8" defer></script>
+  <script src="/assets/admin.js?v=20260721-9" defer></script>
 </body>
 </html>

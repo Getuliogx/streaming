@@ -4,6 +4,8 @@ require('dotenv').config();
 
 const path = require('path');
 const fs = require('fs/promises');
+const dns = require('dns').promises;
+const net = require('net');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
@@ -29,8 +31,12 @@ const ALLOWED_TMDB_TYPES = new Set(['movie', 'tv']);
 const MAX_PLAYLIST_ITEMS = 1500;
 const MAX_OKRU_PAGES = 90;
 const MAX_OKRU_ITEMS = 1500;
+const MAX_GENERIC_PAGES = 20;
+const MAX_GENERIC_ITEMS = 1500;
+const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
+const GENERIC_TIMEOUT_MS = 25_000;
 const OKRU_TIMEOUT_MS = 25_000;
-const OKRU_IMPORT_VERSION = '8.0.0';
+const IMPORTER_VERSION = '9.0.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -1226,6 +1232,417 @@ function parsePlaylist(content, defaults = {}) {
   });
 }
 
+
+
+function isPrivateIp(address) {
+  const value = String(address || '').toLowerCase();
+  if (!value) return true;
+  if (net.isIPv4(value)) {
+    const parts = value.split('.').map(Number);
+    const [a, b] = parts;
+    return a === 10
+      || a === 127
+      || a === 0
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 198 && (b === 18 || b === 19))
+      || a >= 224;
+  }
+  if (net.isIPv6(value)) {
+    return value === '::1'
+      || value === '::'
+      || value.startsWith('fc')
+      || value.startsWith('fd')
+      || value.startsWith('fe8')
+      || value.startsWith('fe9')
+      || value.startsWith('fea')
+      || value.startsWith('feb')
+      || value.startsWith('::ffff:127.')
+      || value.startsWith('::ffff:10.')
+      || value.startsWith('::ffff:192.168.');
+  }
+  return true;
+}
+
+async function assertPublicRemoteUrl(input) {
+  let url;
+  try { url = input instanceof URL ? new URL(input.toString()) : new URL(String(input || '')); }
+  catch { throw new Error('Cole um link válido começando com http:// ou https://.'); }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('O link precisa começar com http:// ou https://.');
+  const host = url.hostname.toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    throw new Error('Endereço local não pode ser importado pelo servidor.');
+  }
+  if (net.isIP(host)) {
+    if (isPrivateIp(host)) throw new Error('Endereço de rede privada não pode ser importado.');
+    return url;
+  }
+  let addresses;
+  try { addresses = await dns.lookup(host, { all: true, verbatim: true }); }
+  catch { throw new Error('Não foi possível localizar o endereço desse site.'); }
+  if (!addresses.length || addresses.some(entry => isPrivateIp(entry.address))) {
+    throw new Error('Esse endereço aponta para uma rede privada e foi bloqueado por segurança.');
+  }
+  return url;
+}
+
+async function fetchPublicResource(inputUrl) {
+  let current = await assertPublicRemoteUrl(inputUrl);
+  for (let redirect = 0; redirect < 8; redirect += 1) {
+    current = await assertPublicRemoteUrl(current);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GENERIC_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(current, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/json,application/xml,text/xml,text/plain,application/vnd.apple.mpegurl,audio/mpegurl,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.7'
+        }
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('O site demorou demais para responder.');
+      throw new Error(`Não foi possível abrir o link: ${error.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      current = new URL(response.headers.get('location'), current);
+      continue;
+    }
+    if (!response.ok) throw new Error(`O site recusou o acesso (${response.status}). A página precisa ser pública.`);
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > MAX_REMOTE_BYTES) throw new Error('A playlist ou página é grande demais para importar.');
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_REMOTE_BYTES) throw new Error('A playlist ou página ultrapassou 8 MB.');
+    return {
+      body: buffer.toString('utf8'),
+      contentType: String(response.headers.get('content-type') || '').toLowerCase(),
+      finalUrl: current,
+      status: response.status
+    };
+  }
+  throw new Error('O site fez redirecionamentos demais.');
+}
+
+function resolveRemoteUrl(value, baseUrl) {
+  const raw = decodeHtmlEntities(String(value || '').trim()).replace(/^['"]|['"]$/g, '');
+  if (!raw || raw.startsWith('javascript:') || raw.startsWith('data:') || raw.startsWith('blob:') || raw.startsWith('#')) return '';
+  try {
+    const url = new URL(raw, baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    url.hash = '';
+    return url.toString();
+  } catch { return ''; }
+}
+
+function isImageOrAssetUrl(value) {
+  return /\.(?:jpe?g|png|gif|webp|svg|ico|css|js|woff2?|ttf|map)(?:$|[?#])/i.test(String(value || ''));
+}
+
+function isLikelyVideoPageUrl(value) {
+  const text = String(value || '').toLowerCase();
+  if (!text || isImageOrAssetUrl(text)) return false;
+  if (/\.(?:mp4|m4v|webm|ogv|ogg|mov|mkv|avi|mp3|m4a|aac|m3u8|mpd)(?:$|[?#])/i.test(text)) return true;
+  if (/(?:youtube\.com\/(?:watch|embed|shorts)|youtu\.be\/|vimeo\.com\/|dailymotion\.com\/(?:video|embed)|dai\.ly\/|ok\.ru\/video\/|drive\.google\.com\/(?:file|open)|archive\.org\/(?:details|embed)|streamable\.com\/|rumble\.com\/|odysee\.com\/|vk\.com\/video|twitch\.tv\/videos\/)/i.test(text)) return true;
+  return /\/(?:video|videos|watch|embed|player|episode|episodio|filme|movie|stream)(?:\/|\?|$)/i.test(text);
+}
+
+function cleanImportedTitle(value, fallback = '') {
+  const title = cleanOkruTitle(value)
+    .replace(/^(?:assistir|watch|play|view|abrir)\s*[:\-–—]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!title || /^(?:view|watch|play|abrir|vídeo|video|link|clique aqui)$/i.test(title)) return cleanOkruTitle(fallback);
+  return title;
+}
+
+function addGenericEntry(map, entry, baseUrl, fallbackTitle = '') {
+  const sourceUrl = resolveRemoteUrl(entry.source_url || entry.url || entry.src || '', baseUrl);
+  if (!sourceUrl || isImageOrAssetUrl(sourceUrl)) return;
+  const existing = map.get(sourceUrl);
+  const title = cleanImportedTitle(entry.title || entry.name || entry.label || '', fallbackTitle);
+  const coverUrl = resolveRemoteUrl(entry.cover_url || entry.poster || entry.thumbnail || entry.image || '', baseUrl);
+  const candidate = {
+    source_url: sourceUrl,
+    title,
+    cover_url: isImageOrAssetUrl(coverUrl) ? coverUrl : '',
+    group_title: cleanText(entry.group_title || entry.category || '', 300)
+  };
+  if (!existing || (!existing.title && candidate.title) || (!existing.cover_url && candidate.cover_url)) {
+    map.set(sourceUrl, { ...(existing || {}), ...candidate });
+  }
+}
+
+function parseJsonPlaylist(body, baseUrl) {
+  let root;
+  try { root = JSON.parse(String(body || '').replace(/^﻿/, '')); }
+  catch { return []; }
+  const entries = new Map();
+  const seen = new Set();
+  const walk = (value, depth = 0, parentTitle = '') => {
+    if (depth > 10 || value === null || value === undefined) return;
+    if (typeof value === 'string') return;
+    if (typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1, parentTitle);
+      return;
+    }
+    const title = value.title || value.name || value.label || value.episodeTitle || value.headline || parentTitle || '';
+    const cover = value.thumbnailUrl || value.thumbnail || value.poster || value.poster_url || value.cover || value.cover_url || value.image || '';
+    const strongUrlKeys = ['contentUrl', 'embedUrl', 'videoUrl', 'video_url', 'streamUrl', 'stream_url', 'source_url', 'src', 'file'];
+    let foundStrongUrl = false;
+    for (const key of strongUrlKeys) {
+      const candidate = value[key];
+      if (typeof candidate === 'string' && candidate.trim()) {
+        addGenericEntry(entries, { source_url: candidate, title, cover_url: cover, group_title: value.category || value.group || '' }, baseUrl);
+        foundStrongUrl = true;
+      }
+    }
+    if (!foundStrongUrl) {
+      for (const key of ['url', 'href', 'link']) {
+        const candidate = value[key];
+        if (typeof candidate === 'string' && candidate.trim()) {
+          addGenericEntry(entries, { source_url: candidate, title, cover_url: cover, group_title: value.category || value.group || '' }, baseUrl);
+        }
+      }
+    }
+    for (const child of Object.values(value)) walk(child, depth + 1, title);
+  };
+  walk(root);
+  return [...entries.values()].slice(0, MAX_GENERIC_ITEMS);
+}
+
+function extractXmlTag(block, names) {
+  for (const name of names) {
+    const escaped = name.replace(':', '\:');
+    const match = String(block || '').match(new RegExp(`<${escaped}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'i'));
+    if (match) return stripHtml(match[1]);
+  }
+  return '';
+}
+
+function extractXmlAttribute(block, names, attribute = 'url') {
+  for (const name of names) {
+    const escaped = name.replace(':', '\:');
+    const match = String(block || '').match(new RegExp(`<${escaped}\\b[^>]*\\b${attribute}=["']([^"']+)["'][^>]*>`, 'i'));
+    if (match) return match[1];
+  }
+  return '';
+}
+
+function parseXmlPlaylist(body, baseUrl) {
+  const text = String(body || '');
+  const blocks = [...text.matchAll(/<(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:item|entry)>/gi)].map(match => match[1]);
+  const entries = new Map();
+  for (const block of blocks) {
+    const title = extractXmlTag(block, ['title', 'media:title']);
+    const sourceUrl = extractXmlAttribute(block, ['enclosure', 'media:content'], 'url')
+      || extractXmlAttribute(block, ['link'], 'href')
+      || extractXmlTag(block, ['link', 'guid']);
+    const coverUrl = extractXmlAttribute(block, ['media:thumbnail'], 'url')
+      || extractXmlTag(block, ['image', 'thumbnail']);
+    addGenericEntry(entries, { source_url: sourceUrl, title, cover_url: coverUrl }, baseUrl);
+  }
+  return [...entries.values()].slice(0, MAX_GENERIC_ITEMS);
+}
+
+function getHtmlMeta(html, property) {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`<meta\\b[^>]*(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']+)["'][^>]*>`, 'i'),
+    new RegExp(`<meta\\b[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${escaped}["'][^>]*>`, 'i')
+  ];
+  for (const pattern of patterns) {
+    const match = String(html || '').match(pattern);
+    if (match) return decodeHtmlEntities(match[1]);
+  }
+  return '';
+}
+
+function getHtmlPageTitle(html) {
+  return cleanImportedTitle(getHtmlMeta(html, 'og:title') || getHtmlMeta(html, 'twitter:title') || (String(html || '').match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || ''), '');
+}
+
+function parseHtmlPlaylist(html, baseUrl) {
+  const text = String(html || '');
+  const entries = new Map();
+  const pageTitle = getHtmlPageTitle(text);
+  const pageImage = getHtmlMeta(text, 'og:image') || getHtmlMeta(text, 'twitter:image');
+
+  for (const match of text.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    for (const item of parseJsonPlaylist(decodeHtmlEntities(match[1]), baseUrl)) addGenericEntry(entries, item, baseUrl, pageTitle);
+  }
+
+  const mediaTagRegex = /<(iframe|video|source)\b([^>]*)>/gi;
+  for (const match of text.matchAll(mediaTagRegex)) {
+    const attrs = match[2] || '';
+    const sourceUrl = attrs.match(/\b(?:src|data-src|data-lazy-src)=["']([^"']+)["']/i)?.[1] || '';
+    const title = attrs.match(/\b(?:title|aria-label)=["']([^"']+)["']/i)?.[1] || pageTitle;
+    const poster = attrs.match(/\bposter=["']([^"']+)["']/i)?.[1] || pageImage;
+    addGenericEntry(entries, { source_url: sourceUrl, title, cover_url: poster }, baseUrl, pageTitle);
+  }
+
+  const anchorRegex = /<a\b([^>]*)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+  for (const match of text.matchAll(anchorRegex)) {
+    const attrs = `${match[1] || ''} ${match[3] || ''}`;
+    const sourceUrl = resolveRemoteUrl(match[2], baseUrl);
+    const inner = match[4] || '';
+    const explicitTitle = attrs.match(/\b(?:title|aria-label|data-title)=["']([^"']+)["']/i)?.[1] || '';
+    const imageAlt = inner.match(/<img\b[^>]*\balt=["']([^"']+)["']/i)?.[1] || '';
+    const visibleText = stripHtml(inner);
+    const classText = attrs.match(/\bclass=["']([^"']+)["']/i)?.[1] || '';
+    const likely = isLikelyVideoPageUrl(sourceUrl) || /video|watch|episode|episodio|filme|movie|player|embed/i.test(classText);
+    if (!likely) continue;
+    const image = inner.match(/<img\b[^>]*(?:src|data-src|data-lazy-src)=["']([^"']+)["']/i)?.[1] || pageImage;
+    addGenericEntry(entries, {
+      source_url: sourceUrl,
+      title: explicitTitle || imageAlt || visibleText,
+      cover_url: image
+    }, baseUrl, pageTitle);
+  }
+
+  const scriptUrlRegex = /["'](?:contentUrl|embedUrl|videoUrl|video_url|streamUrl|stream_url|playerUrl|file|source_url)["']\s*:\s*["']([^"']+)["']/gi;
+  for (const match of text.matchAll(scriptUrlRegex)) {
+    addGenericEntry(entries, { source_url: unescapeJsonText(match[1]), title: pageTitle, cover_url: pageImage }, baseUrl, pageTitle);
+  }
+
+  const nextPages = [];
+  for (const match of text.matchAll(/<a\b([^>]*)\bhref=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const attrs = `${match[1] || ''} ${match[3] || ''}`;
+    const label = `${attrs} ${stripHtml(match[4] || '')}`;
+    if (!/\b(?:rel=["']?next|next|próxima|proxima|seguinte|mais vídeos|more videos|load more)\b/i.test(label)) continue;
+    const nextUrl = resolveRemoteUrl(match[2], baseUrl);
+    if (nextUrl) nextPages.push(nextUrl);
+  }
+
+  return { entries: [...entries.values()].slice(0, MAX_GENERIC_ITEMS), nextPages: [...new Set(nextPages)], title: pageTitle };
+}
+
+function buildRecordsFromGenericEntries(entries, defaults = {}, collectionTitle = '') {
+  const defaultSeries = cleanText(defaults.series_title, 180);
+  const contentTypeRequested = cleanText(defaults.content_type, 20);
+  const treatAsSeries = Boolean(defaultSeries || contentTypeRequested === 'episode');
+  const inferredSeries = cleanImportedTitle(collectionTitle, '').replace(/\s*(?:playlist|vídeos?|videos?|canal|episodes?|episódios?)\s*$/i, '').trim();
+  const fallbackSeries = defaultSeries || (treatAsSeries ? inferredSeries : '');
+  const defaultSeason = cleanNullableInt(defaults.season) ?? 1;
+  const firstEpisode = cleanNullableInt(defaults.episode) ?? 1;
+  const common = {
+    description: cleanText(defaults.description, 5000),
+    year: cleanNullableInt(defaults.year),
+    genres: cleanText(defaults.genres, 300),
+    category: cleanText(defaults.category, 300),
+    cover_url: cleanHttpUrl(defaults.cover_url, 2000),
+    backdrop_url: cleanHttpUrl(defaults.backdrop_url, 2000),
+    tmdb_id: cleanNullableInt(defaults.tmdb_id),
+    tmdb_type: ALLOWED_TMDB_TYPES.has(cleanText(defaults.tmdb_type, 20)) ? cleanText(defaults.tmdb_type, 20) : '',
+    featured: false,
+    published: defaults.published !== false
+  };
+
+  return entries.slice(0, MAX_GENERIC_ITEMS).map((entry, index) => {
+    const rawTitle = cleanImportedTitle(entry.title, `Vídeo ${index + 1}`);
+    const info = parseEpisodeInfo(rawTitle, fallbackSeries);
+    const isEpisode = treatAsSeries || Boolean(info?.seriesTitle);
+    const seriesTitle = isEpisode ? (fallbackSeries || info?.seriesTitle || '') : '';
+    const season = isEpisode ? (info?.season ?? defaultSeason) : null;
+    const episode = isEpisode ? (info?.episode ?? (firstEpisode + index)) : null;
+    const title = isEpisode
+      ? (cleanImportedTitle(info?.episodeTitle || removeSeriesPrefix(rawTitle, seriesTitle), '') || `Episódio ${episode}`)
+      : rawTitle;
+    return normalizeTitle({
+      ...common,
+      title,
+      series_title: seriesTitle,
+      content_type: isEpisode && seriesTitle ? 'episode' : 'movie',
+      season,
+      episode,
+      source_url: entry.source_url,
+      source_type: detectSourceType(entry.source_url),
+      cover_url: common.cover_url || cleanHttpUrl(entry.cover_url, 2000),
+      category: common.category || cleanText(entry.group_title, 300)
+    });
+  });
+}
+
+async function readGenericCollection(inputUrl) {
+  const startUrl = await assertPublicRemoteUrl(inputUrl);
+  if (isOkruHost(startUrl.hostname) && /^\/video\/c\d+/i.test(startUrl.pathname)) {
+    const collection = await readOkruCollection(startUrl.toString());
+    return { format: 'okru', title: collection.title, entries: collection.entries.map(item => ({
+      source_url: `https://ok.ru/video/${item.id}`,
+      title: item.title,
+      cover_url: item.poster || ''
+    })), pages: null, expected: collection.expectedCount || null, complete: collection.complete !== false };
+  }
+
+  if (/\.(?:mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|m4a|aac|mpd)(?:$|[?#])/i.test(startUrl.toString())) {
+    return { format: 'direct', title: '', entries: [{ source_url: startUrl.toString(), title: '' }], pages: 1, complete: true };
+  }
+
+  const first = await fetchPublicResource(startUrl);
+  const body = first.body;
+  const type = first.contentType;
+  const finalUrl = first.finalUrl;
+
+  if (/json/.test(type) || /^[\s﻿]*[\[{]/.test(body)) {
+    const entries = parseJsonPlaylist(body, finalUrl);
+    if (entries.length) return { format: 'json', title: '', entries, pages: 1, complete: true };
+  }
+
+  if (/xml|rss|atom/.test(type) || /<(?:rss|feed|channel)\b/i.test(body)) {
+    const entries = parseXmlPlaylist(body, finalUrl);
+    if (entries.length) return { format: 'rss/xml', title: extractXmlTag(body, ['title']), entries, pages: 1, complete: true };
+  }
+
+  const looksM3u = /#EXTM3U|#EXTINF:/i.test(body) || /mpegurl/.test(type) || /\.(?:m3u|m3u8|txt)(?:$|[?#])/i.test(finalUrl.toString());
+  if (looksM3u) {
+    if (/#EXT-X-(?:TARGETDURATION|MEDIA-SEQUENCE|STREAM-INF)/i.test(body)) {
+      return { format: 'hls', title: '', entries: [{ source_url: finalUrl.toString(), title: '' }], pages: 1, complete: true };
+    }
+    const records = parsePlaylist(body, {});
+    return { format: 'm3u/txt', title: '', entries: records.map(record => ({ source_url: record.source_url, title: record.title, cover_url: record.cover_url, group_title: record.category })), pages: 1, complete: true };
+  }
+
+  if (!/html/.test(type) && !/<html\b|<a\b|<iframe\b|<video\b/i.test(body)) {
+    const urls = [...body.matchAll(/https?:\/\/[^\s<>"']+/gi)].map(match => match[0]);
+    const entries = new Map();
+    for (const url of urls) addGenericEntry(entries, { source_url: url, title: '' }, finalUrl, '');
+    if (entries.size) return { format: 'texto', title: '', entries: [...entries.values()], pages: 1, complete: true };
+  }
+
+  const queue = [finalUrl.toString()];
+  const visited = new Set();
+  const allEntries = new Map();
+  let collectionTitle = '';
+  let pages = 0;
+  while (queue.length && pages < MAX_GENERIC_PAGES && allEntries.size < MAX_GENERIC_ITEMS) {
+    const pageUrl = queue.shift();
+    if (visited.has(pageUrl)) continue;
+    visited.add(pageUrl);
+    const resource = pages === 0 && pageUrl === finalUrl.toString() ? first : await fetchPublicResource(pageUrl);
+    pages += 1;
+    const parsed = parseHtmlPlaylist(resource.body, resource.finalUrl);
+    collectionTitle ||= parsed.title;
+    for (const entry of parsed.entries) addGenericEntry(allEntries, entry, resource.finalUrl, parsed.title || collectionTitle);
+    for (const next of parsed.nextPages) {
+      try {
+        const nextUrl = new URL(next);
+        if (nextUrl.hostname === finalUrl.hostname && !visited.has(nextUrl.toString()) && queue.length < MAX_GENERIC_PAGES) queue.push(nextUrl.toString());
+      } catch {}
+    }
+  }
+  if (!allEntries.size) throw new Error('Não encontrei links de vídeo nessa página. Ela pode carregar tudo por JavaScript, exigir login ou bloquear o servidor.');
+  return { format: 'página HTML', title: collectionTitle, entries: [...allEntries.values()].slice(0, MAX_GENERIC_ITEMS), pages, complete: queue.length === 0 };
+}
+
 async function tmdbRequest(pathname, params = {}) {
   if (!HAS_TMDB) {
     const error = new Error('Configure TMDB_API_KEY no Render para usar a busca de capas.');
@@ -1399,6 +1816,37 @@ app.post('/api/admin/import-playlist', requireAdmin, async (req, res, next) => {
   }
 });
 
+
+app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
+  try {
+    const defaults = req.body.defaults || {};
+    const inputUrl = cleanText(req.body.url, 4000);
+    if (!inputUrl) return res.status(400).json({ error: 'Cole o link da playlist, feed ou página.' });
+    const collection = await readGenericCollection(inputUrl);
+    let records = buildRecordsFromGenericEntries(collection.entries, defaults, collection.title);
+    records = await enrichEpisodeRecordsWithTmdb(records);
+    const result = await createManyTitles(records, {
+      updateExisting: true,
+      removeSourceUrls: [cleanHttpUrl(inputUrl, 4000)]
+    });
+    res.status(201).json({
+      ...result,
+      parsed: records.length,
+      found: collection.entries.length,
+      format: collection.format,
+      pages: collection.pages,
+      expected: collection.expected || null,
+      complete: collection.complete !== false,
+      importer_version: IMPORTER_VERSION
+    });
+  } catch (error) {
+    if (/link|playlist|página|site|vídeo|feed|pública|acesso|endereço|JavaScript|login|bloque/i.test(error.message)) {
+      return res.status(400).json({ error: error.message });
+    }
+    next(error);
+  }
+});
+
 app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
   try {
     const defaults = req.body.defaults || {};
@@ -1417,7 +1865,7 @@ app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
       found: collection.entries.length,
       expected: collection.expectedCount || null,
       complete: collection.complete !== false,
-      importer_version: OKRU_IMPORT_VERSION
+      importer_version: IMPORTER_VERSION
     });
   } catch (error) {
     if (/OK\.ru|playlist|canal|link|pública|vídeo|endereço|recusou|demorou/i.test(error.message)) {
@@ -1447,7 +1895,7 @@ app.delete('/api/admin/titles/:id', requireAdmin, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get('/api/admin/importer-version', requireAdmin, (req, res) => res.json({ version: OKRU_IMPORT_VERSION }));
+app.get('/api/admin/importer-version', requireAdmin, (req, res) => res.json({ version: IMPORTER_VERSION }));
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/watch', (req, res) => res.sendFile(path.join(__dirname, 'public', 'watch.html')));
@@ -1496,5 +1944,10 @@ module.exports = {
   isGenericVideoTitle,
   chooseBestOkruTitle,
   readOkruCollection,
-  enrichEpisodeRecordsWithTmdb
+  enrichEpisodeRecordsWithTmdb,
+  parseJsonPlaylist,
+  parseXmlPlaylist,
+  parseHtmlPlaylist,
+  buildRecordsFromGenericEntries,
+  readGenericCollection
 };
