@@ -617,5 +617,28 @@
     "published": true,
     "created_at": "2026-07-21T12:12:04.093Z",
     "updated_at": "2026-07-21T12:30:52.886Z"
+  },
+  {
+    "id": 29,
+    "title": "Gnomeu e Julieta",
+    "series_title": "",
+    "description": "Gnomeu e Julieta são anões de jardim cujas famílias são vizinhas e rivais. Um dia eles se apaixonam, para desgosto dos familiares. Para ficarem juntos, eles precisarão enfrentar diversos obstáculos.",
+    "year": 2011,
+    "genres": "Animação, Família",
+    "category": "",
+    "cover_url": "https://image.tmdb.org/t/p/w500/crfkHThpFO8ddvkhJn5XVSgMT6Q.jpg",
+    "backdrop_url": "https://image.tmdb.org/t/p/original/w3LLngJIAA1R7Mp2S3G0HZl2R3H.jpg",
+    "episode_image_url": "",
+    "content_type": "movie",
+    "season": null,
+    "episode": null,
+    "source_type": "okru",
+    "source_url": "https://ok.ru/video/17724923972146",
+    "tmdb_id": 45772,
+    "tmdb_type": "movie",
+    "featured": false,
+    "published": true,
+    "created_at": "2026-07-22T11:44:00.262Z",
+    "updated_at": "2026-07-22T11:44:00.262Z"
   }
 ]
