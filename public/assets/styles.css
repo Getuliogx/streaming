@@ -1377,3 +1377,9 @@ details summary {
     display: none;
   }
 }
+
+
+.unified-player-progress:disabled {
+  cursor: not-allowed;
+  opacity: .35;
+}

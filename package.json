@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "10.6.0",
+  "version": "10.7.0",
   "private": true,
-  "description": "Minha Stream com um único player HLS, OK.ru resolvido por yt-dlp e áudio do Google Drive combinado pelo FFmpeg.",
+  "description": "Minha Stream com player único por transmissão direta, sem conversão e sem baixar antes de reproduzir.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

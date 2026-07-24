@@ -1,41 +1,27 @@
 'use strict';
 
 const crypto = require('crypto');
-const fs = require('fs');
-const fsp = require('fs/promises');
-const os = require('os');
-const path = require('path');
+const dns = require('dns').promises;
+const net = require('net');
 const { spawn } = require('child_process');
+const { Readable } = require('stream');
 
-const PLAYER_ROOT =
-  process.env.PLAYER_CACHE_DIR ||
-  path.join(os.tmpdir(), 'minha-stream-unified-player');
+const RESOLVE_TIMEOUT_MS = 45_000;
+const PROXY_TIMEOUT_MS = 45_000;
+const SOURCE_TTL_MS = 2 * 60 * 60 * 1000;
+const MAX_COMMAND_OUTPUT = 18 * 1024 * 1024;
 
-const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-const FAILED_SESSION_TTL_MS = 60 * 1000;
-const READY_TIMEOUT_MS = 120 * 1000;
-const COMMAND_TIMEOUT_MS = 75 * 1000;
-const MAX_COMMAND_OUTPUT = 24 * 1024 * 1024;
-const MAX_ACTIVE_TRANSCODERS = Math.max(
-  1,
-  Math.min(3, Number(process.env.PLAYER_MAX_TRANSCODERS || 2))
-);
-
-const sessions = new Map();
-const transcoderQueue = [];
-let activeTranscoders = 0;
+const sources = new Map();
 
 function cleanText(value, max = 12000) {
   return String(value ?? '').trim().slice(0, max);
 }
 
 function sanitizeError(value) {
-  const text = cleanText(value, 1600)
+  return cleanText(value, 1200)
     .replace(/https?:\/\/\S+/gi, '[endereço removido]')
     .replace(/\s+/g, ' ')
     .trim();
-
-  return text || 'Não foi possível preparar o vídeo.';
 }
 
 function commandExists(command) {
@@ -67,7 +53,7 @@ function runCommand(command, args, options = {}) {
 
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-    }, options.timeout || COMMAND_TIMEOUT_MS);
+    }, options.timeout || RESOLVE_TIMEOUT_MS);
 
     function append(current, chunk) {
       const next = current + chunk.toString('utf8');
@@ -98,17 +84,15 @@ function runCommand(command, args, options = {}) {
       clearTimeout(timer);
 
       if (code === 0 && !killedForSize) {
-        resolve({
-          stdout,
-          stderr
-        });
+        resolve({ stdout, stderr });
         return;
       }
 
+      const detail = sanitizeError(stderr);
       const error = new Error(
         killedForSize
           ? `${command} retornou dados demais.`
-          : `${command} terminou com código ${code}. ${stderr}`
+          : `${command} terminou com código ${code}. ${detail}`
       );
 
       error.command = command;
@@ -119,33 +103,122 @@ function runCommand(command, args, options = {}) {
   });
 }
 
-function acquireTranscoderSlot() {
-  if (activeTranscoders < MAX_ACTIVE_TRANSCODERS) {
-    activeTranscoders += 1;
-    return Promise.resolve();
+function isPrivateAddress(address) {
+  if (!address) return true;
+
+  if (net.isIPv4(address)) {
+    const [a, b] = address.split('.').map(Number);
+
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      a >= 224
+    );
   }
 
-  return new Promise(resolve => {
-    transcoderQueue.push(resolve);
-  }).then(() => {
-    activeTranscoders += 1;
-  });
-}
+  if (net.isIPv6(address)) {
+    const normalized = address.toLowerCase();
 
-function releaseTranscoderSlot() {
-  activeTranscoders = Math.max(0, activeTranscoders - 1);
-  const next = transcoderQueue.shift();
-  if (next) next();
-}
-
-async function withTranscoderSlot(task) {
-  await acquireTranscoderSlot();
-
-  try {
-    return await task();
-  } finally {
-    releaseTranscoderSlot();
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe8') ||
+      normalized.startsWith('fe9') ||
+      normalized.startsWith('fea') ||
+      normalized.startsWith('feb') ||
+      normalized.startsWith('ff')
+    );
   }
+
+  return true;
+}
+
+async function assertPublicUrl(value) {
+  const url = new URL(value);
+
+  if (!/^https?:$/i.test(url.protocol)) {
+    const error = new Error('A fonte precisa usar HTTP ou HTTPS.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (
+    url.hostname === 'localhost' ||
+    url.hostname.endsWith('.local') ||
+    (net.isIP(url.hostname) && isPrivateAddress(url.hostname))
+  ) {
+    const error = new Error('Endereço de mídia não permitido.');
+    error.status = 403;
+    throw error;
+  }
+
+  if (!net.isIP(url.hostname)) {
+    const records = await dns.lookup(url.hostname, { all: true });
+
+    if (
+      !records.length ||
+      records.some(record => isPrivateAddress(record.address))
+    ) {
+      const error = new Error('Endereço de mídia não permitido.');
+      error.status = 403;
+      throw error;
+    }
+  }
+
+  return url;
+}
+
+async function safeFetch(input, options = {}) {
+  let current = await assertPublicUrl(input);
+  const headers = {
+    'user-agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+    accept: '*/*',
+    'accept-encoding': 'identity',
+    ...(options.headers || {})
+  };
+
+  for (let redirects = 0; redirects <= 7; redirects += 1) {
+    const response = await fetch(current, {
+      method: options.method || 'GET',
+      headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(
+        options.timeout || PROXY_TIMEOUT_MS
+      )
+    });
+
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      response.headers.get('location')
+    ) {
+      current = await assertPublicUrl(
+        new URL(
+          response.headers.get('location'),
+          current
+        ).toString()
+      );
+      continue;
+    }
+
+    return {
+      response,
+      finalUrl: current
+    };
+  }
+
+  const error = new Error('A fonte redirecionou vezes demais.');
+  error.status = 502;
+  throw error;
 }
 
 function sourceUrlForItem(item) {
@@ -173,7 +246,7 @@ function sourceUrlForItem(item) {
       source.match(/[?&]id=([a-zA-Z0-9_-]+)/);
 
     if (!match) {
-      throw new Error('O código do arquivo do Google Drive é inválido.');
+      throw new Error('O código do Google Drive é inválido.');
     }
 
     return `https://drive.google.com/file/d/${match[1]}/view`;
@@ -182,7 +255,7 @@ function sourceUrlForItem(item) {
   return source;
 }
 
-function directMediaKind(value) {
+function mediaKindFromUrl(value) {
   const text = String(value || '').toLowerCase();
 
   if (/\.m3u8(?:$|[?#])/.test(text)) return 'hls';
@@ -190,53 +263,10 @@ function directMediaKind(value) {
   if (
     /\.(?:mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|m4a|aac)(?:$|[?#])/.test(text)
   ) {
-    return 'direct';
+    return 'video';
   }
 
   return '';
-}
-
-function normalizeHeaders(value) {
-  const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36'
-  };
-
-  if (value && typeof value === 'object') {
-    for (const [name, content] of Object.entries(value)) {
-      const safeName = String(name || '').replace(/[\r\n:]/g, '').trim();
-      const safeValue = String(content || '').replace(/[\r\n]/g, ' ').trim();
-
-      if (safeName && safeValue) {
-        headers[safeName] = safeValue;
-      }
-    }
-  }
-
-  return headers;
-}
-
-function headerBlock(headers) {
-  return Object.entries(normalizeHeaders(headers))
-    .map(([name, value]) => `${name}: ${value}\r\n`)
-    .join('');
-}
-
-function formatHeight(format) {
-  const height = Number(format?.height || 0);
-  const width = Number(format?.width || 0);
-  const bitrate = Number(format?.tbr || format?.vbr || 0);
-
-  return height * 1_000_000 + width * 1_000 + bitrate;
-}
-
-function formatAudioScore(format) {
-  const bitrate = Number(format?.abr || format?.tbr || 0);
-  const channels = Number(format?.audio_channels || 0);
-  const preferredCodec = /^(?:mp4a|aac)/i.test(format?.acodec || '') ? 10000 : 0;
-
-  return preferredCodec + channels * 1000 + bitrate;
 }
 
 function hasVideo(format) {
@@ -257,116 +287,126 @@ function hasAudio(format) {
   );
 }
 
-function selectInputsFromInfo(info) {
-  const requested = Array.isArray(info?.requested_formats)
-    ? info.requested_formats
-    : [];
+function combinedScore(format) {
+  const height = Number(format?.height || 0);
+  const width = Number(format?.width || 0);
+  const bitrate = Number(format?.tbr || 0);
+  const mp4 = format?.ext === 'mp4' ? 500000 : 0;
+  const h264 = /^(?:avc1|h264)/i.test(format?.vcodec || '')
+    ? 400000
+    : 0;
+  const aac = /^(?:mp4a|aac)/i.test(format?.acodec || '')
+    ? 300000
+    : 0;
 
-  const allFormats = [
-    ...requested,
-    ...(Array.isArray(info?.formats) ? info.formats : [])
-  ].filter(format => format && format.url);
-
-  const combinedRequested = requested.find(
-    format => hasVideo(format) && hasAudio(format)
+  return (
+    height * 1_000_000 +
+    width * 1000 +
+    bitrate +
+    mp4 +
+    h264 +
+    aac
   );
+}
 
-  if (combinedRequested) {
-    return {
-      video: combinedRequested,
-      audio: null,
-      combined: true
-    };
+function selectCombinedFormat(info) {
+  const candidates = [];
+
+  if (info?.url && hasVideo(info) && hasAudio(info)) {
+    candidates.push(info);
   }
 
-  const requestedVideo = requested.find(hasVideo);
-  const requestedAudio = requested.find(
-    format => hasAudio(format) && !hasVideo(format)
-  );
-
-  if (requestedVideo && requestedAudio) {
-    return {
-      video: requestedVideo,
-      audio: requestedAudio,
-      combined: false
-    };
+  if (Array.isArray(info?.requested_formats)) {
+    candidates.push(
+      ...info.requested_formats.filter(
+        format => hasVideo(format) && hasAudio(format)
+      )
+    );
   }
 
-  if (info?.url && hasVideo(info)) {
-    if (hasAudio(info)) {
-      return {
-        video: info,
-        audio: null,
-        combined: true
-      };
+  if (Array.isArray(info?.formats)) {
+    candidates.push(
+      ...info.formats.filter(
+        format => hasVideo(format) && hasAudio(format)
+      )
+    );
+  }
+
+  const unique = new Map();
+
+  for (const format of candidates) {
+    if (!format.url) continue;
+
+    const previous = unique.get(format.url);
+
+    if (
+      !previous ||
+      combinedScore(format) > combinedScore(previous)
+    ) {
+      unique.set(format.url, format);
     }
   }
 
-  const combined = allFormats
-    .filter(format => hasVideo(format) && hasAudio(format))
-    .sort((a, b) => formatHeight(b) - formatHeight(a))[0];
+  return [...unique.values()]
+    .sort((a, b) => combinedScore(b) - combinedScore(a))[0] ||
+    null;
+}
 
-  if (combined) {
-    return {
-      video: combined,
-      audio: null,
-      combined: true
-    };
-  }
-
-  const video = allFormats
-    .filter(hasVideo)
-    .sort((a, b) => {
-      const aH264 = /^(?:avc1|h264)/i.test(a.vcodec || '') ? 1 : 0;
-      const bH264 = /^(?:avc1|h264)/i.test(b.vcodec || '') ? 1 : 0;
-
-      return bH264 - aH264 || formatHeight(b) - formatHeight(a);
-    })[0];
-
-  const audio = allFormats
-    .filter(format => hasAudio(format) && !hasVideo(format))
-    .sort((a, b) => formatAudioScore(b) - formatAudioScore(a))[0];
-
-  if (!video) {
-    throw new Error('A fonte não forneceu uma faixa de vídeo.');
-  }
-
-  return {
-    video,
-    audio: audio || null,
-    combined: Boolean(hasAudio(video))
+function normalizeHeaders(value, referer = '') {
+  const headers = {
+    'user-agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+    accept: '*/*',
+    'accept-encoding': 'identity'
   };
+
+  if (value && typeof value === 'object') {
+    for (const [rawName, rawValue] of Object.entries(value)) {
+      const name = String(rawName || '')
+        .replace(/[\r\n:]/g, '')
+        .trim()
+        .toLowerCase();
+
+      const content = String(rawValue || '')
+        .replace(/[\r\n]/g, ' ')
+        .trim();
+
+      if (name && content) {
+        headers[name] = content;
+      }
+    }
+  }
+
+  if (referer && !headers.referer) {
+    headers.referer = referer;
+  }
+
+  return headers;
 }
 
 async function resolveWithYtDlp(item) {
   const sourceUrl = sourceUrlForItem(item);
-  const directKind = directMediaKind(sourceUrl);
+  const directKind = mediaKindFromUrl(sourceUrl);
 
   if (
-    (item.source_type === 'direct' || item.source_type === 'hls') &&
-    directKind
+    directKind &&
+    item.source_type !== 'okru' &&
+    item.source_type !== 'gdrive'
   ) {
     return {
-      sourceUrl,
-      video: {
-        url: sourceUrl,
-        vcodec: '',
-        acodec: '',
-        http_headers: {}
-      },
-      audio: null,
-      combined: true,
+      url: sourceUrl,
+      kind: directKind,
+      headers: normalizeHeaders({}, sourceUrl),
       extractor: 'direct'
     };
   }
 
   const selector = [
-    'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]',
-    'bestvideo[vcodec^=avc1]+bestaudio',
-    'bestvideo[ext=mp4]+bestaudio',
-    'bestvideo+bestaudio',
-    'best[ext=mp4]',
-    'best'
+    'best[vcodec!=none][acodec!=none][vcodec^=avc1][acodec^=mp4a][ext=mp4]',
+    'best[vcodec!=none][acodec!=none][vcodec^=avc1][ext=mp4]',
+    'best[vcodec!=none][acodec!=none][ext=mp4]',
+    'best[vcodec!=none][acodec!=none]'
   ].join('/');
 
   let result;
@@ -381,31 +421,35 @@ async function resolveWithYtDlp(item) {
         '--no-progress',
         '--no-check-certificates',
         '--socket-timeout',
-        '35',
+        '30',
         '--format',
         selector,
         sourceUrl
       ],
       {
-        timeout: COMMAND_TIMEOUT_MS
+        timeout: RESOLVE_TIMEOUT_MS
       }
     );
   } catch (error) {
-    const detail = sanitizeError(error.stderr || error.message);
+    const detail = sanitizeError(
+      error.stderr || error.message
+    );
 
     if (item.source_type === 'okru') {
       throw new Error(
-        `O OK.ru não liberou o vídeo público para reprodução. ${detail}`
+        `O OK.ru não entregou uma versão pública com vídeo e áudio juntos. ${detail}`
       );
     }
 
     if (item.source_type === 'gdrive') {
       throw new Error(
-        `O Google Drive não liberou o arquivo público. ${detail}`
+        `O Google Drive não entregou o arquivo original com áudio. ${detail}`
       );
     }
 
-    throw new Error(`A fonte não pôde ser resolvida. ${detail}`);
+    throw new Error(
+      `A fonte não pôde ser resolvida. ${detail}`
+    );
   }
 
   let info;
@@ -413,414 +457,277 @@ async function resolveWithYtDlp(item) {
   try {
     info = JSON.parse(result.stdout);
   } catch {
-    throw new Error('O resolvedor de mídia retornou uma resposta inválida.');
+    throw new Error(
+      'O resolvedor retornou uma resposta inválida.'
+    );
   }
 
-  const selected = selectInputsFromInfo(info);
+  let format = selectCombinedFormat(info);
+
+  // Google Drive normalmente entrega o arquivo original em info.url.
+  // Alguns extratores não preenchem vcodec/acodec, mas o arquivo original
+  // continua contendo vídeo e áudio.
+  if (
+    !format &&
+    item.source_type === 'gdrive' &&
+    info?.url
+  ) {
+    format = {
+      ...info,
+      url: info.url,
+      http_headers:
+        info.http_headers ||
+        {}
+    };
+  }
+
+  if (!format) {
+    throw new Error(
+      'Essa fonte só forneceu vídeo e áudio separados. ' +
+      'O player não baixa nem converte arquivos.'
+    );
+  }
 
   return {
-    sourceUrl,
-    ...selected,
-    extractor: cleanText(info.extractor_key || info.extractor || 'yt-dlp', 120)
+    url: format.url,
+    kind:
+      /m3u8|mpegurl/i.test(
+        `${format.protocol || ''} ${format.url || ''}`
+      )
+        ? 'hls'
+        : 'video',
+    headers: normalizeHeaders(
+      format.http_headers || info.http_headers,
+      sourceUrl
+    ),
+    extractor: cleanText(
+      info.extractor_key ||
+      info.extractor ||
+      'yt-dlp',
+      120
+    )
   };
 }
 
-function inputArguments(input, fallbackReferer = '') {
-  if (!input?.url) return [];
-
-  const headers = normalizeHeaders(input.http_headers);
-
-  if (
-    fallbackReferer &&
-    !headers.Referer &&
-    !headers.referer
-  ) {
-    headers.Referer = fallbackReferer;
-  }
-
-  return [
-    '-reconnect',
-    '1',
-    '-reconnect_streamed',
-    '1',
-    '-reconnect_delay_max',
-    '5',
-    '-headers',
-    headerBlock(headers),
-    '-i',
-    input.url
-  ];
+function createSourceId() {
+  return crypto.randomBytes(18).toString('hex');
 }
 
-function h264Compatible(value) {
-  return /^(?:avc1|h264)/i.test(String(value || ''));
-}
+function createSourceRecord(resolved) {
+  const id = createSourceId();
 
-function buildFfmpegArguments(resolved, sessionDir, forceVideoTranscode = false) {
-  const playlistPath = path.join(sessionDir, 'index.m3u8');
-  const segmentPattern = path.join(sessionDir, 'segment-%06d.ts');
-
-  const args = [
-    '-hide_banner',
-    '-loglevel',
-    'warning',
-    '-nostdin',
-    '-y'
-  ];
-
-  args.push(
-    ...inputArguments(resolved.video, resolved.sourceUrl)
-  );
-
-  if (resolved.audio) {
-    args.push(
-      ...inputArguments(resolved.audio, resolved.sourceUrl)
-    );
-  }
-
-  args.push(
-    '-map',
-    '0:v:0'
-  );
-
-  if (resolved.audio) {
-    args.push(
-      '-map',
-      '1:a:0'
-    );
-  } else {
-    args.push(
-      '-map',
-      '0:a:0?'
-    );
-  }
-
-  const copyVideo =
-    !forceVideoTranscode &&
-    h264Compatible(resolved.video?.vcodec);
-
-  if (copyVideo) {
-    args.push(
-      '-c:v',
-      'copy'
-    );
-  } else {
-    args.push(
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '22',
-      '-pix_fmt',
-      'yuv420p'
-    );
-  }
-
-  // O áudio é sempre convertido para AAC. Isso corrige Drive sem som
-  // e também combina a faixa de áudio separada do OK.ru.
-  args.push(
-    '-c:a',
-    'aac',
-    '-b:a',
-    '160k',
-    '-ac',
-    '2',
-    '-ar',
-    '48000',
-    '-max_muxing_queue_size',
-    '4096',
-    '-f',
-    'hls',
-    '-hls_time',
-    '4',
-    '-hls_list_size',
-    '0',
-    '-hls_playlist_type',
-    'event',
-    '-hls_flags',
-    'independent_segments+temp_file',
-    '-hls_segment_filename',
-    segmentPattern,
-    playlistPath
-  );
-
-  return args;
-}
-
-function sessionKey(item) {
-  return crypto
-    .createHash('sha256')
-    .update(
-      `${item.id}\n${item.source_type}\n${item.source_url}`
-    )
-    .digest('hex')
-    .slice(0, 24);
-}
-
-async function removeSession(session) {
-  if (!session) return;
-
-  if (session.process && !session.process.killed) {
-    try {
-      session.process.kill('SIGKILL');
-    } catch {}
-  }
-
-  sessions.delete(session.key);
-
-  try {
-    await fsp.rm(session.dir, {
-      recursive: true,
-      force: true
-    });
-  } catch {}
-}
-
-async function waitForPlaylist(session, timeout = READY_TIMEOUT_MS) {
-  const deadline = Date.now() + timeout;
-
-  while (Date.now() < deadline) {
-    if (session.status === 'error') {
-      throw new Error(session.error || 'Não foi possível gerar o vídeo.');
-    }
-
-    try {
-      const stats = await fsp.stat(
-        path.join(session.dir, 'index.m3u8')
-      );
-
-      if (stats.size > 40) {
-        session.status = 'ready';
-        session.lastAccess = Date.now();
-        return;
-      }
-    } catch {}
-
-    if (
-      session.ffmpegExited &&
-      session.status !== 'ready'
-    ) {
-      throw new Error(
-        session.error ||
-        'O FFmpeg não conseguiu gerar a reprodução.'
-      );
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 350));
-  }
-
-  throw new Error('O vídeo demorou demais para ficar pronto.');
-}
-
-function startFfmpeg(session, resolved, forceVideoTranscode) {
-  return new Promise((resolve, reject) => {
-    const args = buildFfmpegArguments(
-      resolved,
-      session.dir,
-      forceVideoTranscode
-    );
-
-    const child = spawn('ffmpeg', args, {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      windowsHide: true
-    });
-
-    session.process = child;
-    session.ffmpegExited = false;
-    session.ffmpegLog = '';
-
-    child.stderr.on('data', chunk => {
-      session.ffmpegLog = (
-        session.ffmpegLog + chunk.toString('utf8')
-      ).slice(-12000);
-    });
-
-    child.once('error', error => {
-      session.ffmpegExited = true;
-      session.error = sanitizeError(error.message);
-      reject(error);
-    });
-
-    child.once('exit', code => {
-      session.ffmpegExited = true;
-
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      const message = sanitizeError(session.ffmpegLog);
-      session.error =
-        `O conversor de vídeo terminou com erro. ${message}`;
-
-      const error = new Error(session.error);
-      error.code = code;
-      reject(error);
-    });
-  });
-}
-
-async function prepareSession(session, item) {
-  await withTranscoderSlot(async () => {
-    session.status = 'resolving';
-    session.lastAccess = Date.now();
-
-    const resolved = await resolveWithYtDlp(item);
-    session.resolved = resolved;
-
-    session.status = 'transcoding';
-
-    let ffmpegPromise = startFfmpeg(
-      session,
-      resolved,
-      false
-    );
-
-    ffmpegPromise.catch(() => {});
-
-    try {
-      await waitForPlaylist(session, 55_000);
-    } catch (firstError) {
-      if (session.process && !session.process.killed) {
-        try {
-          session.process.kill('SIGKILL');
-        } catch {}
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      session.status = 'transcoding';
-      session.ffmpegExited = false;
-      session.error = '';
-      session.ffmpegLog = '';
-
-      await fsp.rm(session.dir, {
-        recursive: true,
-        force: true
-      });
-
-      await fsp.mkdir(session.dir, {
-        recursive: true
-      });
-
-      // Segunda tentativa converte também o vídeo para H.264.
-      ffmpegPromise = startFfmpeg(
-        session,
-        resolved,
-        true
-      );
-
-      ffmpegPromise.catch(() => {});
-
-      await waitForPlaylist(session, 65_000);
-    }
-
-    ffmpegPromise.catch(error => {
-      if (session.status !== 'ready') {
-        session.status = 'error';
-        session.error = sanitizeError(
-          error.message || session.ffmpegLog
-        );
-      }
-    });
-
-    session.status = 'ready';
-    session.lastAccess = Date.now();
-  });
-}
-
-async function createOrGetSession(item) {
-  const key = sessionKey(item);
-  const previous = sessions.get(key);
-
-  if (previous) {
-    previous.lastAccess = Date.now();
-
-    if (previous.status === 'ready') {
-      return previous;
-    }
-
-    if (
-      previous.status === 'error' &&
-      Date.now() - previous.createdAt > FAILED_SESSION_TTL_MS
-    ) {
-      await removeSession(previous);
-    } else {
-      await previous.promise;
-      return previous;
-    }
-  }
-
-  const dir = path.join(PLAYER_ROOT, key);
-
-  await fsp.rm(dir, {
-    recursive: true,
-    force: true
-  });
-
-  await fsp.mkdir(dir, {
-    recursive: true
-  });
-
-  const session = {
-    key,
-    dir,
-    status: 'queued',
-    error: '',
+  sources.set(id, {
+    ...resolved,
+    id,
     createdAt: Date.now(),
     lastAccess: Date.now(),
-    process: null,
-    ffmpegExited: false,
-    ffmpegLog: '',
-    promise: null
-  };
+    expiresAt: Date.now() + SOURCE_TTL_MS
+  });
 
-  sessions.set(key, session);
-
-  session.promise = prepareSession(session, item)
-    .catch(error => {
-      session.status = 'error';
-      session.error = sanitizeError(
-        error.message || session.ffmpegLog
-      );
-      throw error;
-    });
-
-  await session.promise;
-  return session;
+  return id;
 }
 
-function mediaType(filename) {
-  if (filename.endsWith('.m3u8')) {
-    return 'application/vnd.apple.mpegurl; charset=utf-8';
+function getSource(id) {
+  const source = sources.get(String(id || ''));
+
+  if (!source || source.expiresAt < Date.now()) {
+    if (source) sources.delete(source.id);
+
+    const error = new Error(
+      'O endereço temporário do vídeo expirou.'
+    );
+
+    error.status = 410;
+    throw error;
   }
 
-  if (filename.endsWith('.ts')) {
-    return 'video/mp2t';
+  source.lastAccess = Date.now();
+  return source;
+}
+
+function absoluteUrl(value, baseUrl) {
+  try {
+    return new URL(
+      String(value || '').trim(),
+      baseUrl
+    ).toString();
+  } catch {
+    return '';
+  }
+}
+
+function createChildSource(parent, target) {
+  return createSourceRecord({
+    url: target,
+    kind: mediaKindFromUrl(target) || 'video',
+    headers: {
+      ...parent.headers,
+      referer:
+        parent.headers?.referer ||
+        parent.url
+    },
+    extractor: parent.extractor
+  });
+}
+
+function rewriteHlsPlaylist(text, baseUrl, parentSource) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(line => {
+      if (!line) return line;
+
+      function proxy(value) {
+        const target = absoluteUrl(value, baseUrl);
+        if (!target) return value;
+
+        const id = createChildSource(
+          parentSource,
+          target
+        );
+
+        return `/api/player-media/${id}`;
+      }
+
+      if (!line.startsWith('#')) {
+        return proxy(line.trim());
+      }
+
+      return line.replace(
+        /URI=(?:"([^"]+)"|'([^']+)'|([^,\s]+))/gi,
+        (_, quoted, single, bare) => {
+          const original =
+            quoted ||
+            single ||
+            bare ||
+            '';
+
+          return `URI="${proxy(original)}"`;
+        }
+      );
+    })
+    .join('\n');
+}
+
+async function proxySource(req, res, source) {
+  const headers = {
+    ...source.headers,
+    accept: req.headers.accept || '*/*',
+    'accept-encoding': 'identity'
+  };
+
+  if (req.headers.range) {
+    headers.range = req.headers.range;
   }
 
-  return 'application/octet-stream';
+  if (req.headers['if-range']) {
+    headers['if-range'] = req.headers['if-range'];
+  }
+
+  const result = await safeFetch(source.url, {
+    method: req.method === 'HEAD'
+      ? 'HEAD'
+      : 'GET',
+    headers,
+    timeout: PROXY_TIMEOUT_MS
+  });
+
+  const response = result.response;
+  const finalUrl = result.finalUrl.toString();
+  const contentType = String(
+    response.headers.get('content-type') || ''
+  );
+
+  const isHls =
+    /mpegurl/i.test(contentType) ||
+    /\.m3u8(?:$|[?#])/i.test(finalUrl);
+
+  if (isHls && req.method !== 'HEAD') {
+    const playlist = await response.text();
+    const rewritten = rewriteHlsPlaylist(
+      playlist,
+      finalUrl,
+      source
+    );
+
+    res.status(response.status);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.apple.mpegurl; charset=utf-8'
+    );
+    res.setHeader(
+      'Cache-Control',
+      'private, no-store'
+    );
+    res.send(rewritten);
+    return;
+  }
+
+  res.status(response.status);
+
+  const passthroughHeaders = [
+    'content-type',
+    'content-length',
+    'content-range',
+    'accept-ranges',
+    'etag',
+    'last-modified',
+    'cache-control'
+  ];
+
+  for (const name of passthroughHeaders) {
+    const value = response.headers.get(name);
+
+    if (value) {
+      res.setHeader(name, value);
+    }
+  }
+
+  if (
+    req.headers.range &&
+    !response.headers.get('content-range')
+  ) {
+    res.removeHeader('content-length');
+  }
+
+  res.setHeader(
+    'Access-Control-Allow-Origin',
+    '*'
+  );
+
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'Content-Length, Content-Range, Accept-Ranges'
+  );
+
+  res.setHeader(
+    'Cross-Origin-Resource-Policy',
+    'cross-origin'
+  );
+
+  if (
+    req.method === 'HEAD' ||
+    !response.body
+  ) {
+    res.end();
+    return;
+  }
+
+  Readable.fromWeb(response.body).pipe(res);
 }
 
 function registerUniversalPlayerRoutes(app, options) {
-  const {
-    findTitle
-  } = options;
+  const { findTitle } = options;
 
   app.get('/api/player-health', async (req, res) => {
-    const [ffmpeg, ytdlp] = await Promise.all([
-      commandExists('ffmpeg'),
-      commandExists('yt-dlp')
-    ]);
+    const ytdlp = await commandExists('yt-dlp');
 
     res.json({
-      ok: ffmpeg && ytdlp,
-      ffmpeg,
+      ok: ytdlp,
       ytdlp,
-      active: activeTranscoders,
-      queued: transcoderQueue.length,
-      sessions: sessions.size
+      mode: 'direct-streaming',
+      converter: false,
+      downloads_before_play: false,
+      sources: sources.size
     });
   });
 
@@ -834,15 +741,16 @@ function registerUniversalPlayerRoutes(app, options) {
         });
       }
 
-      const session = await createOrGetSession(item);
+      const resolved = await resolveWithYtDlp(item);
+      const sourceId = createSourceRecord(resolved);
 
       res.setHeader('Cache-Control', 'no-store');
 
       res.json({
         player: 'universal-video',
-        kind: 'hls',
-        url:
-          `/api/player-hls/${session.key}/index.m3u8`,
+        mode: 'direct-streaming',
+        kind: resolved.kind,
+        url: `/api/player-media/${sourceId}`,
         poster:
           item.episode_image_url ||
           item.backdrop_url ||
@@ -850,92 +758,65 @@ function registerUniversalPlayerRoutes(app, options) {
           ''
       });
     } catch (error) {
-      const message = sanitizeError(error.message);
-
       error.status =
-        /inválid|não possui|não encontr/i.test(message)
-          ? 400
-          : 422;
+        error.status ||
+        (
+          /inválid|não possui|não encontr/i.test(
+            error.message || ''
+          )
+            ? 400
+            : 422
+        );
 
-      error.message = message;
       next(error);
     }
   });
 
-  app.get('/api/player-hls/:session/:filename', async (req, res, next) => {
+  async function mediaProxy(req, res, next) {
     try {
-      const session = sessions.get(req.params.session);
-      const filename = String(req.params.filename || '');
+      const source = getSource(
+        req.params.source
+      );
 
-      if (
-        !session ||
-        !/^(?:index\.m3u8|segment-\d{6}\.ts)$/.test(filename)
-      ) {
-        return res.status(404).end();
-      }
-
-      const file = path.join(session.dir, filename);
-      const resolved = path.resolve(file);
-
-      if (
-        !resolved.startsWith(
-          `${path.resolve(session.dir)}${path.sep}`
-        )
-      ) {
-        return res.status(403).end();
-      }
-
-      await fsp.access(file);
-      session.lastAccess = Date.now();
-
-      res.setHeader('Content-Type', mediaType(filename));
-
-      if (filename.endsWith('.m3u8')) {
-        res.setHeader(
-          'Cache-Control',
-          'no-store, no-cache, must-revalidate'
-        );
-      } else {
-        res.setHeader(
-          'Cache-Control',
-          'private, max-age=120'
-        );
-      }
-
-      res.sendFile(resolved);
+      await proxySource(
+        req,
+        res,
+        source
+      );
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        return res.status(404).end();
-      }
-
       next(error);
     }
-  });
+  }
+
+  app.get(
+    '/api/player-media/:source',
+    mediaProxy
+  );
+
+  app.head(
+    '/api/player-media/:source',
+    mediaProxy
+  );
 }
 
 setInterval(() => {
   const now = Date.now();
 
-  for (const session of sessions.values()) {
-    const ttl =
-      session.status === 'error'
-        ? FAILED_SESSION_TTL_MS
-        : SESSION_TTL_MS;
-
-    if (now - session.lastAccess > ttl) {
-      removeSession(session).catch(() => {});
+  for (const source of sources.values()) {
+    if (
+      source.expiresAt < now ||
+      now - source.lastAccess > SOURCE_TTL_MS
+    ) {
+      sources.delete(source.id);
     }
   }
-}, 5 * 60 * 1000).unref();
-
-fsp.mkdir(PLAYER_ROOT, {
-  recursive: true
-}).catch(() => {});
+}, 10 * 60 * 1000).unref();
 
 module.exports = {
   registerUniversalPlayerRoutes,
-  selectInputsFromInfo,
-  buildFfmpegArguments,
+  selectCombinedFormat,
   sourceUrlForItem,
-  h264Compatible
+  mediaKindFromUrl,
+  rewriteHlsPlaylist,
+  normalizeHeaders
 };

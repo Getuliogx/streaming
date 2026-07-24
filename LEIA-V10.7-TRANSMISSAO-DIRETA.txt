@@ -1,0 +1,23 @@
+MINHA STREAM V10.7 — TRANSMISSÃO DIRETA
+
+Esta versão remove a conversão do caminho do player.
+
+Ao clicar no conteúdo:
+
+1. yt-dlp resolve somente o endereço final da mídia.
+2. O servidor abre a fonte.
+3. Os bytes são encaminhados imediatamente ao navegador.
+4. Range, Content-Length e Content-Range são preservados.
+5. A barra permite avançar e voltar quando a fonte oferece Range.
+
+Não existe download completo antes da reprodução.
+
+O player exige uma versão que já tenha vídeo e áudio juntos. Quando a fonte
+oferece apenas faixas separadas, ela mostra uma mensagem e não baixa nem
+converte o arquivo.
+
+ATUALIZAÇÃO
+
+1. Envie todo o conteúdo de streaming-main para a raiz do GitHub.
+2. Confirme o commit.
+3. Execute ATUALIZAR-ORACLE-PELO-GITHUB.cmd.

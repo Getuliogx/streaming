@@ -36,6 +36,7 @@ let hlsInstance = null;
 let playerReady = false;
 let seeking = false;
 let controlsTimer = null;
+let mediaLoadTimer = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -79,6 +80,9 @@ function showControls() {
 }
 
 function destroyPlayerSource() {
+  clearTimeout(mediaLoadTimer);
+  mediaLoadTimer = null;
+
   if (hlsInstance) {
     try {
       hlsInstance.destroy();
@@ -152,14 +156,35 @@ async function togglePlayback() {
 async function mountUniversalPlayer(item) {
   destroyPlayerSource();
   watchError.classList.add('hidden');
-  setLoading(true, 'Preparando vídeo e áudio no player único…');
+  setLoading(true, 'Abrindo o vídeo no player único…');
+  playerProgress.disabled = true;
 
-  const response = await fetch(
-    `/api/player-source/${encodeURIComponent(item.id)}`,
-    {
-      cache: 'no-store'
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 50000);
+
+  let response;
+
+  try {
+    response = await fetch(
+      `/api/player-source/${encodeURIComponent(item.id)}`,
+      {
+        cache: 'no-store',
+        signal: controller.signal
+      }
+    );
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw new Error(
+        'A fonte demorou demais para responder. Tente novamente.'
+      );
     }
-  );
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const source = await response.json();
 
@@ -170,8 +195,13 @@ async function mountUniversalPlayer(item) {
     );
   }
 
-  if (source.player !== 'universal-video') {
-    throw new Error('O servidor não retornou o player único.');
+  if (
+    source.player !== 'universal-video' ||
+    source.mode !== 'direct-streaming'
+  ) {
+    throw new Error(
+      'O servidor não retornou a transmissão direta do player único.'
+    );
   }
 
   unifiedVideo.poster =
@@ -212,6 +242,16 @@ async function mountUniversalPlayer(item) {
   }
 
   unifiedVideo.load();
+
+  clearTimeout(mediaLoadTimer);
+  mediaLoadTimer = setTimeout(() => {
+    if (!playerReady) {
+      destroyPlayerSource();
+      showError(
+        'A fonte não começou a reproduzir em 45 segundos.'
+      );
+    }
+  }, 45000);
 }
 
 function showError(message) {
@@ -222,7 +262,13 @@ function showError(message) {
 }
 
 unifiedVideo.addEventListener('loadedmetadata', () => {
+  clearTimeout(mediaLoadTimer);
+  mediaLoadTimer = null;
   playerReady = true;
+  playerProgress.disabled = !(
+    Number.isFinite(unifiedVideo.duration) &&
+    unifiedVideo.duration > 0
+  );
   setLoading(false);
   updateTimeline();
   updatePlayButtons();
@@ -230,6 +276,8 @@ unifiedVideo.addEventListener('loadedmetadata', () => {
 });
 
 unifiedVideo.addEventListener('canplay', () => {
+  clearTimeout(mediaLoadTimer);
+  mediaLoadTimer = null;
   playerReady = true;
   setLoading(false);
   updatePlayButtons();
@@ -249,13 +297,22 @@ unifiedVideo.addEventListener('playing', () => {
 unifiedVideo.addEventListener('pause', updatePlayButtons);
 unifiedVideo.addEventListener('ended', updatePlayButtons);
 unifiedVideo.addEventListener('timeupdate', updateTimeline);
-unifiedVideo.addEventListener('durationchange', updateTimeline);
+unifiedVideo.addEventListener('durationchange', () => {
+  playerProgress.disabled = !(
+    Number.isFinite(unifiedVideo.duration) &&
+    unifiedVideo.duration > 0
+  );
+  updateTimeline();
+});
 unifiedVideo.addEventListener('volumechange', updateVolumeButton);
 
 unifiedVideo.addEventListener('error', () => {
+  clearTimeout(mediaLoadTimer);
+  mediaLoadTimer = null;
+
   if (unifiedVideo.error) {
     showError(
-      'O servidor não conseguiu preparar o vídeo e o áudio para reprodução.'
+      'A transmissão direta não pôde ser reproduzida.'
     );
   }
 });
