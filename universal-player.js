@@ -1,948 +1,828 @@
 'use strict';
 
 const crypto = require('crypto');
-const dns = require('dns').promises;
-const net = require('net');
-const { Readable } = require('stream');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const os = require('os');
+const path = require('path');
+const { spawn } = require('child_process');
 
-const PLAYER_PROXY_TTL_MS = 6 * 60 * 60 * 1000;
-const MAX_RESOLVER_DEPTH = 3;
-const MAX_RESOLVER_HTML = 5 * 1024 * 1024;
-const MEDIA_TIMEOUT_MS = 35_000;
+const PLAYER_ROOT =
+  process.env.PLAYER_CACHE_DIR ||
+  path.join(os.tmpdir(), 'minha-stream-unified-player');
 
-function cleanText(value, max = 5000) {
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+const FAILED_SESSION_TTL_MS = 60 * 1000;
+const READY_TIMEOUT_MS = 120 * 1000;
+const COMMAND_TIMEOUT_MS = 75 * 1000;
+const MAX_COMMAND_OUTPUT = 24 * 1024 * 1024;
+const MAX_ACTIVE_TRANSCODERS = Math.max(
+  1,
+  Math.min(3, Number(process.env.PLAYER_MAX_TRANSCODERS || 2))
+);
+
+const sessions = new Map();
+const transcoderQueue = [];
+let activeTranscoders = 0;
+
+function cleanText(value, max = 12000) {
   return String(value ?? '').trim().slice(0, max);
 }
 
-function cleanHttpUrl(value, max = 12000) {
-  const text = cleanText(value, max);
-  if (!text) return '';
+function sanitizeError(value) {
+  const text = cleanText(value, 1600)
+    .replace(/https?:\/\/\S+/gi, '[endereço removido]')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  try {
-    const parsed = new URL(text);
-    return /^https?:$/i.test(parsed.protocol) ? parsed.toString() : '';
-  } catch {
-    return '';
-  }
+  return text || 'Não foi possível preparar o vídeo.';
 }
 
-function isPrivateAddress(address) {
-  if (!address) return true;
-
-  if (net.isIPv4(address)) {
-    const parts = address.split('.').map(Number);
-    const [a, b] = parts;
-
-    return (
-      a === 10 ||
-      a === 127 ||
-      a === 0 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      a >= 224
-    );
-  }
-
-  if (net.isIPv6(address)) {
-    const normalized = address.toLowerCase();
-
-    return (
-      normalized === '::1' ||
-      normalized === '::' ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      normalized.startsWith('fe8') ||
-      normalized.startsWith('fe9') ||
-      normalized.startsWith('fea') ||
-      normalized.startsWith('feb') ||
-      normalized.startsWith('ff')
-    );
-  }
-
-  return true;
-}
-
-async function assertPublicUrl(value) {
-  const url = new URL(value);
-
-  if (!/^https?:$/i.test(url.protocol)) {
-    const error = new Error('A fonte do vídeo precisa usar HTTP ou HTTPS.');
-    error.status = 400;
-    throw error;
-  }
-
-  if (
-    url.hostname === 'localhost' ||
-    url.hostname.endsWith('.local') ||
-    net.isIP(url.hostname) && isPrivateAddress(url.hostname)
-  ) {
-    const error = new Error('Endereço de mídia não permitido.');
-    error.status = 403;
-    throw error;
-  }
-
-  if (!net.isIP(url.hostname)) {
-    const records = await dns.lookup(url.hostname, { all: true });
-
-    if (!records.length || records.some(record => isPrivateAddress(record.address))) {
-      const error = new Error('Endereço de mídia não permitido.');
-      error.status = 403;
-      throw error;
-    }
-  }
-
-  return url;
-}
-
-async function safeFetch(input, options = {}) {
-  let current = await assertPublicUrl(input);
-  const headers = {
-    'user-agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-    accept: '*/*',
-    ...(options.headers || {})
-  };
-
-  for (let redirects = 0; redirects <= 6; redirects += 1) {
-    const response = await fetch(current, {
-      method: options.method || 'GET',
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(options.timeout || MEDIA_TIMEOUT_MS)
+function commandExists(command) {
+  return new Promise(resolve => {
+    const child = spawn(command, ['--version'], {
+      stdio: ['ignore', 'ignore', 'ignore']
     });
 
-    if (
-      response.status >= 300 &&
-      response.status < 400 &&
-      response.headers.get('location')
-    ) {
-      current = await assertPublicUrl(
-        new URL(response.headers.get('location'), current).toString()
-      );
-      continue;
+    child.once('error', () => resolve(false));
+    child.once('exit', code => resolve(code === 0));
+  });
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: {
+        ...process.env,
+        ...(options.env || {})
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let killedForSize = false;
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, options.timeout || COMMAND_TIMEOUT_MS);
+
+    function append(current, chunk) {
+      const next = current + chunk.toString('utf8');
+
+      if (next.length > MAX_COMMAND_OUTPUT) {
+        killedForSize = true;
+        child.kill('SIGKILL');
+        return next.slice(-MAX_COMMAND_OUTPUT);
+      }
+
+      return next;
     }
 
-    return {
-      response,
-      finalUrl: current
-    };
+    child.stdout.on('data', chunk => {
+      stdout = append(stdout, chunk);
+    });
+
+    child.stderr.on('data', chunk => {
+      stderr = append(stderr, chunk);
+    });
+
+    child.once('error', error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.once('exit', code => {
+      clearTimeout(timer);
+
+      if (code === 0 && !killedForSize) {
+        resolve({
+          stdout,
+          stderr
+        });
+        return;
+      }
+
+      const error = new Error(
+        killedForSize
+          ? `${command} retornou dados demais.`
+          : `${command} terminou com código ${code}. ${stderr}`
+      );
+
+      error.command = command;
+      error.code = code;
+      error.stderr = stderr;
+      reject(error);
+    });
+  });
+}
+
+function acquireTranscoderSlot() {
+  if (activeTranscoders < MAX_ACTIVE_TRANSCODERS) {
+    activeTranscoders += 1;
+    return Promise.resolve();
   }
 
-  const error = new Error('A fonte do vídeo redirecionou vezes demais.');
-  error.status = 502;
-  throw error;
+  return new Promise(resolve => {
+    transcoderQueue.push(resolve);
+  }).then(() => {
+    activeTranscoders += 1;
+  });
 }
 
-function decodeEscapedUrl(value) {
-  return cleanHttpUrl(
-    String(value || '')
-      .replace(/\\u0026/gi, '&')
-      .replace(/\\\//g, '/')
-      .replace(/&amp;/gi, '&')
-  );
+function releaseTranscoderSlot() {
+  activeTranscoders = Math.max(0, activeTranscoders - 1);
+  const next = transcoderQueue.shift();
+  if (next) next();
 }
 
-function mediaKindFromUrl(value) {
-  const url = String(value || '').toLowerCase();
+async function withTranscoderSlot(task) {
+  await acquireTranscoderSlot();
 
-  if (/\.m3u8(?:$|[?#])/.test(url)) return 'hls';
+  try {
+    return await task();
+  } finally {
+    releaseTranscoderSlot();
+  }
+}
+
+function sourceUrlForItem(item) {
+  const source = cleanText(item.source_url, 12000);
+
+  if (!source) {
+    throw new Error('O conteúdo não possui endereço de vídeo.');
+  }
+
+  if (item.source_type === 'okru') {
+    const match =
+      source.match(/(?:videoembed|video)\/(\d{6,})/i) ||
+      source.match(/(\d{6,})/);
+
+    if (!match) {
+      throw new Error('O código do vídeo do OK.ru é inválido.');
+    }
+
+    return `https://ok.ru/video/${match[1]}`;
+  }
+
+  if (item.source_type === 'gdrive') {
+    const match =
+      source.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+      source.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+
+    if (!match) {
+      throw new Error('O código do arquivo do Google Drive é inválido.');
+    }
+
+    return `https://drive.google.com/file/d/${match[1]}/view`;
+  }
+
+  return source;
+}
+
+function directMediaKind(value) {
+  const text = String(value || '').toLowerCase();
+
+  if (/\.m3u8(?:$|[?#])/.test(text)) return 'hls';
 
   if (
-    /\.(?:mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|m4a|aac)(?:$|[?#])/.test(url)
+    /\.(?:mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|m4a|aac)(?:$|[?#])/.test(text)
   ) {
-    return 'video';
+    return 'direct';
   }
 
   return '';
 }
 
-function qualityScore(name, url) {
-  const text = `${name || ''} ${url || ''}`.toLowerCase();
-  let score = 0;
+function normalizeHeaders(value) {
+  const headers = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36'
+  };
 
-  if (/2160|4k|ultra/.test(text)) score += 900;
-  if (/1440|quad/.test(text)) score += 800;
-  if (/1080|full/.test(text)) score += 700;
-  if (/720|\bhd\b/.test(text)) score += 600;
-  if (/480|\bsd\b/.test(text)) score += 500;
-  if (/360|low/.test(text)) score += 400;
-  if (/240|mobile/.test(text)) score += 300;
-  if (/\.mp4(?:$|[?#])/.test(text)) score += 80;
-  if (/\.m3u8(?:$|[?#])/.test(text)) score += 60;
+  if (value && typeof value === 'object') {
+    for (const [name, content] of Object.entries(value)) {
+      const safeName = String(name || '').replace(/[\r\n:]/g, '').trim();
+      const safeValue = String(content || '').replace(/[\r\n]/g, ' ').trim();
 
-  const numeric = [...text.matchAll(/(?:^|\D)(\d{3,4})(?:p|\D|$)/g)]
-    .map(match => Number(match[1]))
-    .filter(Number.isFinite);
-
-  if (numeric.length) score += Math.max(...numeric);
-
-  return score;
-}
-
-
-function decodeHtmlEntities(value) {
-  return String(value || '')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#34;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&apos;/gi, "'")
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
-}
-
-function extractBalancedJsonStrings(raw) {
-  const text = String(raw || '');
-  const results = [];
-  let start = -1;
-  let quote = '';
-  let escaped = false;
-  const stack = [];
-
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-
-    if (start < 0) {
-      if (character === '{' || character === '[') {
-        start = index;
-        stack.length = 0;
-        stack.push(character);
-        quote = '';
-        escaped = false;
-      }
-      continue;
-    }
-
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (character === '\\') {
-        escaped = true;
-        continue;
-      }
-
-      if (character === quote) {
-        quote = '';
-      }
-
-      continue;
-    }
-
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-
-    if (character === '{' || character === '[') {
-      stack.push(character);
-      continue;
-    }
-
-    if (character === '}' || character === ']') {
-      const expected = character === '}' ? '{' : '[';
-
-      if (stack[stack.length - 1] !== expected) {
-        start = -1;
-        stack.length = 0;
-        quote = '';
-        escaped = false;
-        continue;
-      }
-
-      stack.pop();
-
-      if (!stack.length) {
-        results.push(text.slice(start, index + 1));
-        start = -1;
-        quote = '';
-        escaped = false;
+      if (safeName && safeValue) {
+        headers[safeName] = safeValue;
       }
     }
   }
 
-  return results;
+  return headers;
 }
 
-function parseOkruJsonPayloads(raw) {
-  const decoded = decodeHtmlEntities(raw)
-    .replace(/^\uFEFF/, '')
-    .replace(/^\s*\)\]\}',?\s*/i, '')
-    .replace(/^\s*while\s*\(\s*1\s*\)\s*;?/i, '')
-    .replace(/^\s*for\s*\(\s*;;\s*\)\s*;?/i, '')
-    .trim();
+function headerBlock(headers) {
+  return Object.entries(normalizeHeaders(headers))
+    .map(([name, value]) => `${name}: ${value}\r\n`)
+    .join('');
+}
 
-  const values = [];
-  const seenStrings = new Set();
-  const seenObjects = new Set();
+function formatHeight(format) {
+  const height = Number(format?.height || 0);
+  const width = Number(format?.width || 0);
+  const bitrate = Number(format?.tbr || format?.vbr || 0);
 
-  function addValue(value, depth = 0) {
-    if (depth > 5 || value === null || value === undefined) return;
+  return height * 1_000_000 + width * 1_000 + bitrate;
+}
 
-    if (typeof value === 'string') {
-      const text = value.trim();
-      if (!text || seenStrings.has(text)) return;
-      seenStrings.add(text);
+function formatAudioScore(format) {
+  const bitrate = Number(format?.abr || format?.tbr || 0);
+  const channels = Number(format?.audio_channels || 0);
+  const preferredCodec = /^(?:mp4a|aac)/i.test(format?.acodec || '') ? 10000 : 0;
 
-      try {
-        addValue(JSON.parse(text), depth + 1);
-      } catch {}
+  return preferredCodec + channels * 1000 + bitrate;
+}
 
-      for (const candidate of extractBalancedJsonStrings(text)) {
+function hasVideo(format) {
+  return Boolean(
+    format &&
+    format.url &&
+    format.vcodec &&
+    format.vcodec !== 'none'
+  );
+}
+
+function hasAudio(format) {
+  return Boolean(
+    format &&
+    format.url &&
+    format.acodec &&
+    format.acodec !== 'none'
+  );
+}
+
+function selectInputsFromInfo(info) {
+  const requested = Array.isArray(info?.requested_formats)
+    ? info.requested_formats
+    : [];
+
+  const allFormats = [
+    ...requested,
+    ...(Array.isArray(info?.formats) ? info.formats : [])
+  ].filter(format => format && format.url);
+
+  const combinedRequested = requested.find(
+    format => hasVideo(format) && hasAudio(format)
+  );
+
+  if (combinedRequested) {
+    return {
+      video: combinedRequested,
+      audio: null,
+      combined: true
+    };
+  }
+
+  const requestedVideo = requested.find(hasVideo);
+  const requestedAudio = requested.find(
+    format => hasAudio(format) && !hasVideo(format)
+  );
+
+  if (requestedVideo && requestedAudio) {
+    return {
+      video: requestedVideo,
+      audio: requestedAudio,
+      combined: false
+    };
+  }
+
+  if (info?.url && hasVideo(info)) {
+    if (hasAudio(info)) {
+      return {
+        video: info,
+        audio: null,
+        combined: true
+      };
+    }
+  }
+
+  const combined = allFormats
+    .filter(format => hasVideo(format) && hasAudio(format))
+    .sort((a, b) => formatHeight(b) - formatHeight(a))[0];
+
+  if (combined) {
+    return {
+      video: combined,
+      audio: null,
+      combined: true
+    };
+  }
+
+  const video = allFormats
+    .filter(hasVideo)
+    .sort((a, b) => {
+      const aH264 = /^(?:avc1|h264)/i.test(a.vcodec || '') ? 1 : 0;
+      const bH264 = /^(?:avc1|h264)/i.test(b.vcodec || '') ? 1 : 0;
+
+      return bH264 - aH264 || formatHeight(b) - formatHeight(a);
+    })[0];
+
+  const audio = allFormats
+    .filter(format => hasAudio(format) && !hasVideo(format))
+    .sort((a, b) => formatAudioScore(b) - formatAudioScore(a))[0];
+
+  if (!video) {
+    throw new Error('A fonte não forneceu uma faixa de vídeo.');
+  }
+
+  return {
+    video,
+    audio: audio || null,
+    combined: Boolean(hasAudio(video))
+  };
+}
+
+async function resolveWithYtDlp(item) {
+  const sourceUrl = sourceUrlForItem(item);
+  const directKind = directMediaKind(sourceUrl);
+
+  if (
+    (item.source_type === 'direct' || item.source_type === 'hls') &&
+    directKind
+  ) {
+    return {
+      sourceUrl,
+      video: {
+        url: sourceUrl,
+        vcodec: '',
+        acodec: '',
+        http_headers: {}
+      },
+      audio: null,
+      combined: true,
+      extractor: 'direct'
+    };
+  }
+
+  const selector = [
+    'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]',
+    'bestvideo[vcodec^=avc1]+bestaudio',
+    'bestvideo[ext=mp4]+bestaudio',
+    'bestvideo+bestaudio',
+    'best[ext=mp4]',
+    'best'
+  ].join('/');
+
+  let result;
+
+  try {
+    result = await runCommand(
+      'yt-dlp',
+      [
+        '--dump-single-json',
+        '--no-playlist',
+        '--no-warnings',
+        '--no-progress',
+        '--no-check-certificates',
+        '--socket-timeout',
+        '35',
+        '--format',
+        selector,
+        sourceUrl
+      ],
+      {
+        timeout: COMMAND_TIMEOUT_MS
+      }
+    );
+  } catch (error) {
+    const detail = sanitizeError(error.stderr || error.message);
+
+    if (item.source_type === 'okru') {
+      throw new Error(
+        `O OK.ru não liberou o vídeo público para reprodução. ${detail}`
+      );
+    }
+
+    if (item.source_type === 'gdrive') {
+      throw new Error(
+        `O Google Drive não liberou o arquivo público. ${detail}`
+      );
+    }
+
+    throw new Error(`A fonte não pôde ser resolvida. ${detail}`);
+  }
+
+  let info;
+
+  try {
+    info = JSON.parse(result.stdout);
+  } catch {
+    throw new Error('O resolvedor de mídia retornou uma resposta inválida.');
+  }
+
+  const selected = selectInputsFromInfo(info);
+
+  return {
+    sourceUrl,
+    ...selected,
+    extractor: cleanText(info.extractor_key || info.extractor || 'yt-dlp', 120)
+  };
+}
+
+function inputArguments(input, fallbackReferer = '') {
+  if (!input?.url) return [];
+
+  const headers = normalizeHeaders(input.http_headers);
+
+  if (
+    fallbackReferer &&
+    !headers.Referer &&
+    !headers.referer
+  ) {
+    headers.Referer = fallbackReferer;
+  }
+
+  return [
+    '-reconnect',
+    '1',
+    '-reconnect_streamed',
+    '1',
+    '-reconnect_delay_max',
+    '5',
+    '-headers',
+    headerBlock(headers),
+    '-i',
+    input.url
+  ];
+}
+
+function h264Compatible(value) {
+  return /^(?:avc1|h264)/i.test(String(value || ''));
+}
+
+function buildFfmpegArguments(resolved, sessionDir, forceVideoTranscode = false) {
+  const playlistPath = path.join(sessionDir, 'index.m3u8');
+  const segmentPattern = path.join(sessionDir, 'segment-%06d.ts');
+
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'warning',
+    '-nostdin',
+    '-y'
+  ];
+
+  args.push(
+    ...inputArguments(resolved.video, resolved.sourceUrl)
+  );
+
+  if (resolved.audio) {
+    args.push(
+      ...inputArguments(resolved.audio, resolved.sourceUrl)
+    );
+  }
+
+  args.push(
+    '-map',
+    '0:v:0'
+  );
+
+  if (resolved.audio) {
+    args.push(
+      '-map',
+      '1:a:0'
+    );
+  } else {
+    args.push(
+      '-map',
+      '0:a:0?'
+    );
+  }
+
+  const copyVideo =
+    !forceVideoTranscode &&
+    h264Compatible(resolved.video?.vcodec);
+
+  if (copyVideo) {
+    args.push(
+      '-c:v',
+      'copy'
+    );
+  } else {
+    args.push(
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '22',
+      '-pix_fmt',
+      'yuv420p'
+    );
+  }
+
+  // O áudio é sempre convertido para AAC. Isso corrige Drive sem som
+  // e também combina a faixa de áudio separada do OK.ru.
+  args.push(
+    '-c:a',
+    'aac',
+    '-b:a',
+    '160k',
+    '-ac',
+    '2',
+    '-ar',
+    '48000',
+    '-max_muxing_queue_size',
+    '4096',
+    '-f',
+    'hls',
+    '-hls_time',
+    '4',
+    '-hls_list_size',
+    '0',
+    '-hls_playlist_type',
+    'event',
+    '-hls_flags',
+    'independent_segments+temp_file',
+    '-hls_segment_filename',
+    segmentPattern,
+    playlistPath
+  );
+
+  return args;
+}
+
+function sessionKey(item) {
+  return crypto
+    .createHash('sha256')
+    .update(
+      `${item.id}\n${item.source_type}\n${item.source_url}`
+    )
+    .digest('hex')
+    .slice(0, 24);
+}
+
+async function removeSession(session) {
+  if (!session) return;
+
+  if (session.process && !session.process.killed) {
+    try {
+      session.process.kill('SIGKILL');
+    } catch {}
+  }
+
+  sessions.delete(session.key);
+
+  try {
+    await fsp.rm(session.dir, {
+      recursive: true,
+      force: true
+    });
+  } catch {}
+}
+
+async function waitForPlaylist(session, timeout = READY_TIMEOUT_MS) {
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    if (session.status === 'error') {
+      throw new Error(session.error || 'Não foi possível gerar o vídeo.');
+    }
+
+    try {
+      const stats = await fsp.stat(
+        path.join(session.dir, 'index.m3u8')
+      );
+
+      if (stats.size > 40) {
+        session.status = 'ready';
+        session.lastAccess = Date.now();
+        return;
+      }
+    } catch {}
+
+    if (
+      session.ffmpegExited &&
+      session.status !== 'ready'
+    ) {
+      throw new Error(
+        session.error ||
+        'O FFmpeg não conseguiu gerar a reprodução.'
+      );
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 350));
+  }
+
+  throw new Error('O vídeo demorou demais para ficar pronto.');
+}
+
+function startFfmpeg(session, resolved, forceVideoTranscode) {
+  return new Promise((resolve, reject) => {
+    const args = buildFfmpegArguments(
+      resolved,
+      session.dir,
+      forceVideoTranscode
+    );
+
+    const child = spawn('ffmpeg', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true
+    });
+
+    session.process = child;
+    session.ffmpegExited = false;
+    session.ffmpegLog = '';
+
+    child.stderr.on('data', chunk => {
+      session.ffmpegLog = (
+        session.ffmpegLog + chunk.toString('utf8')
+      ).slice(-12000);
+    });
+
+    child.once('error', error => {
+      session.ffmpegExited = true;
+      session.error = sanitizeError(error.message);
+      reject(error);
+    });
+
+    child.once('exit', code => {
+      session.ffmpegExited = true;
+
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      const message = sanitizeError(session.ffmpegLog);
+      session.error =
+        `O conversor de vídeo terminou com erro. ${message}`;
+
+      const error = new Error(session.error);
+      error.code = code;
+      reject(error);
+    });
+  });
+}
+
+async function prepareSession(session, item) {
+  await withTranscoderSlot(async () => {
+    session.status = 'resolving';
+    session.lastAccess = Date.now();
+
+    const resolved = await resolveWithYtDlp(item);
+    session.resolved = resolved;
+
+    session.status = 'transcoding';
+
+    let ffmpegPromise = startFfmpeg(
+      session,
+      resolved,
+      false
+    );
+
+    ffmpegPromise.catch(() => {});
+
+    try {
+      await waitForPlaylist(session, 55_000);
+    } catch (firstError) {
+      if (session.process && !session.process.killed) {
         try {
-          addValue(JSON.parse(candidate), depth + 1);
+          session.process.kill('SIGKILL');
         } catch {}
       }
 
-      return;
-    }
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-    if (typeof value !== 'object' || seenObjects.has(value)) return;
-    seenObjects.add(value);
-    values.push(value);
+      session.status = 'transcoding';
+      session.ffmpegExited = false;
+      session.error = '';
+      session.ffmpegLog = '';
 
-    if (Array.isArray(value)) {
-      for (const child of value) addValue(child, depth + 1);
-      return;
-    }
+      await fsp.rm(session.dir, {
+        recursive: true,
+        force: true
+      });
 
-    for (const child of Object.values(value)) {
-      if (child && (typeof child === 'object' || typeof child === 'string')) {
-        addValue(child, depth + 1);
-      }
-    }
-  }
+      await fsp.mkdir(session.dir, {
+        recursive: true
+      });
 
-  try {
-    addValue(JSON.parse(decoded));
-  } catch {}
-
-  for (const candidate of extractBalancedJsonStrings(decoded)) {
-    try {
-      addValue(JSON.parse(candidate));
-    } catch {}
-  }
-
-  const attributePatterns = [
-    /\bdata-options\s*=\s*"([^"]+)"/gi,
-    /\bdata-options\s*=\s*'([^']+)'/gi,
-    /\bdata-video\s*=\s*"([^"]+)"/gi,
-    /\bdata-video\s*=\s*'([^']+)'/gi
-  ];
-
-  for (const pattern of attributePatterns) {
-    let match;
-
-    while ((match = pattern.exec(decoded))) {
-      addValue(decodeHtmlEntities(match[1]), 0);
-    }
-  }
-
-  return values;
-}
-
-function collectOkruMediaCandidates(payloads) {
-  const candidates = [];
-  const seen = new Set();
-
-  for (const payload of payloads || []) {
-    for (const candidate of extractOkruMediaCandidates(payload)) {
-      const key = String(candidate.url || '');
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      candidates.push(candidate);
-    }
-  }
-
-  return candidates;
-}
-
-function extractOkruCandidatesFromText(raw, baseUrl) {
-  const candidates = collectOkruMediaCandidates(
-    parseOkruJsonPayloads(raw)
-  );
-
-  const htmlCandidates = extractMediaFromHtml(
-    decodeHtmlEntities(raw),
-    baseUrl
-  ).candidates;
-
-  const seen = new Set(candidates.map(item => item.url));
-
-  for (const candidate of htmlCandidates) {
-    if (!candidate.url || seen.has(candidate.url)) continue;
-    seen.add(candidate.url);
-    candidates.push(candidate);
-  }
-
-  return candidates;
-}
-
-function extractOkruMediaCandidates(root) {
-  const queue = [root];
-  const visited = new Set();
-  const candidates = new Map();
-
-  function add(rawUrl, name = '', type = '') {
-    const url = decodeEscapedUrl(rawUrl);
-    if (!url) return;
-
-    const kind =
-      /m3u8|mpegurl|hls/i.test(`${type} ${url}`)
-        ? 'hls'
-        : mediaKindFromUrl(url) || 'video';
-
-    const key = url;
-    const candidate = {
-      url,
-      kind,
-      name: cleanText(name, 100),
-      score: qualityScore(name, url)
-    };
-
-    const previous = candidates.get(key);
-    if (!previous || candidate.score > previous.score) {
-      candidates.set(key, candidate);
-    }
-  }
-
-  while (queue.length) {
-    const value = queue.shift();
-
-    if (!value || typeof value !== 'object' || visited.has(value)) continue;
-    visited.add(value);
-
-    if (Array.isArray(value)) {
-      for (const child of value) queue.push(child);
-      continue;
-    }
-
-    const objectUrl =
-      value.url ||
-      value.src ||
-      value.videoUrl ||
-      value.video_url ||
-      value.file ||
-      value.playbackUrl ||
-      value.playback_url;
-
-    if (objectUrl) {
-      add(
-        objectUrl,
-        value.name || value.quality || value.label || value.type || '',
-        value.type || value.mimeType || value.mime_type || ''
-      );
-    }
-
-    for (const [key, child] of Object.entries(value)) {
-      if (
-        typeof child === 'string' &&
-        /(?:url|src|manifest|playlist|hls|video|file)/i.test(key)
-      ) {
-        add(child, key, key);
-      }
-
-      if (child && typeof child === 'object') queue.push(child);
-    }
-  }
-
-  return [...candidates.values()];
-}
-
-function selectBestMediaCandidate(candidates) {
-  const list = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
-
-  if (!list.length) return null;
-
-  return [...list].sort((a, b) => {
-    if (a.kind !== b.kind) {
-      if (a.kind === 'video') return -1;
-      if (b.kind === 'video') return 1;
-    }
-
-    return (b.score || 0) - (a.score || 0);
-  })[0];
-}
-
-function extractOkruId(value) {
-  const text = String(value || '');
-  const match =
-    text.match(/(?:videoembed|video)\/(\d{6,})/) ||
-    text.match(/(\d{6,})/);
-
-  return match ? match[1] : '';
-}
-
-async function resolveOkru(item, fetchOkruHtml) {
-  const id = extractOkruId(item.source_url);
-
-  if (!id) {
-    throw new Error('O código do vídeo do OK.ru é inválido.');
-  }
-
-  const attempts = [
-    {
-      url: (() => {
-        const metadataUrl = new URL('https://ok.ru/dk');
-        metadataUrl.searchParams.set('cmd', 'videoPlayerMetadata');
-        metadataUrl.searchParams.set('mid', id);
-        return metadataUrl;
-      })(),
-      referer: `https://ok.ru/video/${id}`
-    },
-    {
-      url: new URL(`https://ok.ru/video/${id}`),
-      referer: `https://ok.ru/video/${id}`
-    },
-    {
-      url: new URL(`https://ok.ru/videoembed/${id}`),
-      referer: `https://ok.ru/video/${id}`
-    },
-    {
-      url: new URL(`https://m.ok.ru/video/${id}`),
-      referer: `https://m.ok.ru/video/${id}`
-    }
-  ];
-
-  const allCandidates = [];
-  const seen = new Set();
-  let lastAccessError = null;
-
-  for (const attempt of attempts) {
-    try {
-      const result = await fetchOkruHtml(attempt.url);
-      const candidates = extractOkruCandidatesFromText(
-        result.html,
-        result.finalUrl?.toString?.() || attempt.url.toString()
+      // Segunda tentativa converte também o vídeo para H.264.
+      ffmpegPromise = startFfmpeg(
+        session,
+        resolved,
+        true
       );
 
-      for (const candidate of candidates) {
-        if (!candidate.url || seen.has(candidate.url)) continue;
-        seen.add(candidate.url);
+      ffmpegPromise.catch(() => {});
 
-        allCandidates.push({
-          ...candidate,
-          referer: candidate.referer || attempt.referer
-        });
-      }
-    } catch (error) {
-      lastAccessError = error;
+      await waitForPlaylist(session, 65_000);
     }
-  }
 
-  const candidate = selectBestMediaCandidate(allCandidates);
-
-  if (!candidate) {
-    const message =
-      lastAccessError &&
-      /recusou|privad|login|acesso/i.test(lastAccessError.message || '')
-        ? 'O vídeo do OK.ru precisa estar público e disponível sem login.'
-        : 'O OK.ru não entregou um arquivo de vídeo reproduzível.';
-
-    const error = new Error(message);
-    error.status = 422;
-    throw error;
-  }
-
-  return {
-    ...candidate,
-    referer: candidate.referer || `https://ok.ru/video/${id}`
-  };
-}
-
-function extractDriveId(value) {
-  const text = String(value || '').trim();
-  const match =
-    text.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-    text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-
-  return match ? match[1] : text;
-}
-
-async function resolveGoogleDrive(item) {
-  const id = extractDriveId(item.source_url);
-
-  if (!/^[a-zA-Z0-9_-]{10,}$/.test(id)) {
-    throw new Error('O código do arquivo do Google Drive é inválido.');
-  }
-
-  return {
-    kind: 'video',
-    url:
-      `https://drive.usercontent.google.com/download` +
-      `?id=${encodeURIComponent(id)}&export=download&confirm=t`,
-    referer: 'https://drive.google.com/'
-  };
-}
-
-function absoluteUrl(value, baseUrl) {
-  try {
-    return new URL(
-      String(value || '')
-        .replace(/\\u0026/gi, '&')
-        .replace(/\\\//g, '/')
-        .replace(/&amp;/gi, '&'),
-      baseUrl
-    ).toString();
-  } catch {
-    return '';
-  }
-}
-
-function extractMediaFromHtml(html, baseUrl) {
-  const source = String(html || '').slice(0, MAX_RESOLVER_HTML);
-  const candidates = [];
-  const iframeUrls = [];
-
-  function add(value, label = '') {
-    const url = absoluteUrl(value, baseUrl);
-    const kind = mediaKindFromUrl(url);
-
-    if (!url || !kind) return;
-
-    candidates.push({
-      url,
-      kind,
-      name: label,
-      score: qualityScore(label, url),
-      referer: baseUrl
+    ffmpegPromise.catch(error => {
+      if (session.status !== 'ready') {
+        session.status = 'error';
+        session.error = sanitizeError(
+          error.message || session.ffmpegLog
+        );
+      }
     });
-  }
 
-  const tagRegex = /<(video|source|iframe|meta)\b([^>]*)>/gi;
-  let match;
+    session.status = 'ready';
+    session.lastAccess = Date.now();
+  });
+}
 
-  while ((match = tagRegex.exec(source))) {
-    const tag = match[1].toLowerCase();
-    const attrs = match[2];
+async function createOrGetSession(item) {
+  const key = sessionKey(item);
+  const previous = sessions.get(key);
 
-    function attr(name) {
-      const pattern = new RegExp(
-        `\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
-        'i'
-      );
-      const found = attrs.match(pattern);
-      return found ? found[1] ?? found[2] ?? found[3] ?? '' : '';
+  if (previous) {
+    previous.lastAccess = Date.now();
+
+    if (previous.status === 'ready') {
+      return previous;
     }
 
-    if (tag === 'iframe') {
-      const iframeUrl = absoluteUrl(attr('src'), baseUrl);
-      if (iframeUrl) iframeUrls.push(iframeUrl);
-      continue;
+    if (
+      previous.status === 'error' &&
+      Date.now() - previous.createdAt > FAILED_SESSION_TTL_MS
+    ) {
+      await removeSession(previous);
+    } else {
+      await previous.promise;
+      return previous;
     }
-
-    if (tag === 'meta') {
-      const property = `${attr('property')} ${attr('name')}`.toLowerCase();
-      if (/og:video|twitter:player:stream/.test(property)) {
-        add(attr('content'), property);
-      }
-      continue;
-    }
-
-    add(attr('src'), attr('label') || attr('type') || tag);
   }
 
-  const escapedUrlRegex =
-    /https?:\\?\/\\?\/[^"'\\\s<]+?\.(?:m3u8|mp4|m4v|webm|ogv|ogg|mov|mkv)(?:\\?[^"'\\\s<]*)?/gi;
+  const dir = path.join(PLAYER_ROOT, key);
 
-  while ((match = escapedUrlRegex.exec(source))) {
-    add(match[0], 'html');
-  }
-
-  const jsonUrlRegex =
-    /"(?:file|src|url|videoUrl|playbackUrl|hlsManifestUrl)"\s*:\s*"((?:\\.|[^"\\])*)"/gi;
-
-  while ((match = jsonUrlRegex.exec(source))) {
-    add(match[1], 'json');
-  }
-
-  return {
-    candidates,
-    iframeUrls: [...new Set(iframeUrls)].slice(0, 8)
-  };
-}
-
-async function resolveGeneric(
-  inputUrl,
-  fetchPublicResource,
-  depth = 0,
-  visited = new Set()
-) {
-  const normalized = cleanHttpUrl(inputUrl);
-  if (!normalized) throw new Error('A fonte do vídeo é inválida.');
-
-  if (visited.has(normalized)) {
-    throw new Error('A página do vídeo criou um ciclo de redirecionamento.');
-  }
-
-  visited.add(normalized);
-
-  const directKind = mediaKindFromUrl(normalized);
-  if (directKind) {
-    return {
-      kind: directKind,
-      url: normalized,
-      referer: normalized
-    };
-  }
-
-  if (depth > MAX_RESOLVER_DEPTH) {
-    throw new Error('A página não revelou um arquivo de vídeo direto.');
-  }
-
-  const resource = await fetchPublicResource(normalized);
-  const type = String(resource.contentType || '').toLowerCase();
-  const finalUrl = resource.finalUrl.toString();
-
-  if (/mpegurl|application\/vnd\.apple\.mpegurl/.test(type)) {
-    return {
-      kind: 'hls',
-      url: finalUrl,
-      referer: normalized
-    };
-  }
-
-  if (/^video\/|^audio\/|application\/octet-stream/.test(type)) {
-    return {
-      kind: 'video',
-      url: finalUrl,
-      referer: normalized
-    };
-  }
-
-  const body = String(resource.body || '');
-
-  if (/#EXTM3U|#EXT-X-(?:TARGETDURATION|STREAM-INF|MEDIA-SEQUENCE)/i.test(body)) {
-    return {
-      kind: 'hls',
-      url: finalUrl,
-      referer: normalized
-    };
-  }
-
-  const extracted = extractMediaFromHtml(body, finalUrl);
-  const best = selectBestMediaCandidate(extracted.candidates);
-
-  if (best) return best;
-
-  for (const iframeUrl of extracted.iframeUrls) {
-    try {
-      return await resolveGeneric(
-        iframeUrl,
-        fetchPublicResource,
-        depth + 1,
-        visited
-      );
-    } catch {}
-  }
-
-  throw new Error(
-    'Esse site não fornece o arquivo do vídeo para o player único.'
-  );
-}
-
-function base64UrlEncode(value) {
-  return Buffer.from(String(value), 'utf8').toString('base64url');
-}
-
-function base64UrlDecode(value) {
-  return Buffer.from(String(value), 'base64url').toString('utf8');
-}
-
-function createSignature(secret, expires, target, referer) {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(`${expires}\n${target}\n${referer}`)
-    .digest('base64url');
-}
-
-function createProxyUrl(secret, target, referer, expires = Date.now() + PLAYER_PROXY_TTL_MS) {
-  const signature = createSignature(secret, expires, target, referer);
-
-  return (
-    `/api/player-media?e=${encodeURIComponent(expires)}` +
-    `&u=${encodeURIComponent(base64UrlEncode(target))}` +
-    `&r=${encodeURIComponent(base64UrlEncode(referer || ''))}` +
-    `&s=${encodeURIComponent(signature)}`
-  );
-}
-
-function readSignedProxyRequest(req, secret) {
-  const expires = Number(req.query.e);
-  const target = base64UrlDecode(req.query.u || '');
-  const referer = base64UrlDecode(req.query.r || '');
-  const signature = String(req.query.s || '');
-
-  if (!Number.isFinite(expires) || expires < Date.now()) {
-    const error = new Error('O endereço temporário do vídeo expirou.');
-    error.status = 410;
-    throw error;
-  }
-
-  const expected = createSignature(secret, expires, target, referer);
-  const receivedBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-
-  if (
-    receivedBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(receivedBuffer, expectedBuffer)
-  ) {
-    const error = new Error('Assinatura de mídia inválida.');
-    error.status = 403;
-    throw error;
-  }
-
-  return {
-    target,
-    referer,
-    expires
-  };
-}
-
-function rewriteHlsPlaylist(text, baseUrl, secret, referer, expires) {
-  const source = String(text || '');
-
-  function proxy(value) {
-    const absolute = absoluteUrl(value, baseUrl);
-    return absolute
-      ? createProxyUrl(secret, absolute, referer || baseUrl, expires)
-      : value;
-  }
-
-  return source
-    .split(/\r?\n/)
-    .map(line => {
-      if (!line) return line;
-
-      if (!line.startsWith('#')) {
-        return proxy(line.trim());
-      }
-
-      return line.replace(
-        /URI=(?:"([^"]+)"|'([^']+)'|([^,\s]+))/gi,
-        (_, doubleQuoted, singleQuoted, bare) => {
-          const original = doubleQuoted || singleQuoted || bare || '';
-          return `URI="${proxy(original)}"`;
-        }
-      );
-    })
-    .join('\n');
-}
-
-async function pipeRemoteMedia(req, res, target, referer, secret, expires) {
-  const headers = {
-    accept: req.headers.accept || '*/*'
-  };
-
-  if (req.headers.range) headers.range = req.headers.range;
-  if (req.headers['if-range']) headers['if-range'] = req.headers['if-range'];
-  if (referer) headers.referer = referer;
-
-  const result = await safeFetch(target, {
-    method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-    headers,
-    timeout: MEDIA_TIMEOUT_MS
+  await fsp.rm(dir, {
+    recursive: true,
+    force: true
   });
 
-  const response = result.response;
-  const contentType = String(response.headers.get('content-type') || '');
-  const finalUrl = result.finalUrl.toString();
-  const looksHls =
-    /mpegurl/i.test(contentType) ||
-    /\.m3u8(?:$|[?#])/i.test(finalUrl);
+  await fsp.mkdir(dir, {
+    recursive: true
+  });
 
-  if (looksHls && req.method !== 'HEAD') {
-    const playlist = await response.text();
-    const rewritten = rewriteHlsPlaylist(
-      playlist,
-      finalUrl,
-      secret,
-      referer || finalUrl,
-      expires
-    );
+  const session = {
+    key,
+    dir,
+    status: 'queued',
+    error: '',
+    createdAt: Date.now(),
+    lastAccess: Date.now(),
+    process: null,
+    ffmpegExited: false,
+    ffmpegLog: '',
+    promise: null
+  };
 
-    res.status(response.status);
-    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.send(rewritten);
-    return;
+  sessions.set(key, session);
+
+  session.promise = prepareSession(session, item)
+    .catch(error => {
+      session.status = 'error';
+      session.error = sanitizeError(
+        error.message || session.ffmpegLog
+      );
+      throw error;
+    });
+
+  await session.promise;
+  return session;
+}
+
+function mediaType(filename) {
+  if (filename.endsWith('.m3u8')) {
+    return 'application/vnd.apple.mpegurl; charset=utf-8';
   }
 
-  res.status(response.status);
-
-  const headersToCopy = [
-    'content-type',
-    'content-length',
-    'content-range',
-    'accept-ranges',
-    'last-modified',
-    'etag',
-    'cache-control'
-  ];
-
-  for (const name of headersToCopy) {
-    const value = response.headers.get(name);
-    if (value) res.setHeader(name, value);
+  if (filename.endsWith('.ts')) {
+    return 'video/mp2t';
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-
-  if (req.method === 'HEAD' || !response.body) {
-    res.end();
-    return;
-  }
-
-  Readable.fromWeb(response.body).pipe(res);
+  return 'application/octet-stream';
 }
 
 function registerUniversalPlayerRoutes(app, options) {
   const {
-    findTitle,
-    fetchOkruHtml,
-    fetchPublicResource
+    findTitle
   } = options;
 
-  const secret = String(
-    options.secret ||
-    process.env.SESSION_SECRET ||
-    process.env.GITHUB_TOKEN ||
-    process.env.ADMIN_PASSWORD ||
-    'minha-stream-player-unico'
-  );
+  app.get('/api/player-health', async (req, res) => {
+    const [ffmpeg, ytdlp] = await Promise.all([
+      commandExists('ffmpeg'),
+      commandExists('yt-dlp')
+    ]);
 
-  async function resolveItem(item) {
-    if (item.source_type === 'okru') {
-      return resolveOkru(item, fetchOkruHtml);
-    }
-
-    if (item.source_type === 'gdrive') {
-      return resolveGoogleDrive(item);
-    }
-
-    if (item.source_type === 'hls') {
-      return {
-        kind: 'hls',
-        url: item.source_url,
-        referer: item.source_url
-      };
-    }
-
-    if (item.source_type === 'direct') {
-      return {
-        kind: mediaKindFromUrl(item.source_url) || 'video',
-        url: item.source_url,
-        referer: item.source_url
-      };
-    }
-
-    return resolveGeneric(item.source_url, fetchPublicResource);
-  }
+    res.json({
+      ok: ffmpeg && ytdlp,
+      ffmpeg,
+      ytdlp,
+      active: activeTranscoders,
+      queued: transcoderQueue.length,
+      sessions: sessions.size
+    });
+  });
 
   app.get('/api/player-source/:id', async (req, res, next) => {
     try {
@@ -954,21 +834,15 @@ function registerUniversalPlayerRoutes(app, options) {
         });
       }
 
-      const source = await resolveItem(item);
-      const expires = Date.now() + PLAYER_PROXY_TTL_MS;
+      const session = await createOrGetSession(item);
 
       res.setHeader('Cache-Control', 'no-store');
 
       res.json({
         player: 'universal-video',
-        kind: source.kind,
-        url: createProxyUrl(
-          secret,
-          source.url,
-          source.referer || item.source_url,
-          expires
-        ),
-        expires,
+        kind: 'hls',
+        url:
+          `/api/player-hls/${session.key}/index.m3u8`,
         poster:
           item.episode_image_url ||
           item.backdrop_url ||
@@ -976,41 +850,92 @@ function registerUniversalPlayerRoutes(app, options) {
           ''
       });
     } catch (error) {
-      if (!error.status) error.status = 422;
+      const message = sanitizeError(error.message);
+
+      error.status =
+        /inválid|não possui|não encontr/i.test(message)
+          ? 400
+          : 422;
+
+      error.message = message;
       next(error);
     }
   });
 
-  async function mediaProxy(req, res, next) {
+  app.get('/api/player-hls/:session/:filename', async (req, res, next) => {
     try {
-      const signed = readSignedProxyRequest(req, secret);
+      const session = sessions.get(req.params.session);
+      const filename = String(req.params.filename || '');
 
-      await pipeRemoteMedia(
-        req,
-        res,
-        signed.target,
-        signed.referer,
-        secret,
-        signed.expires
-      );
+      if (
+        !session ||
+        !/^(?:index\.m3u8|segment-\d{6}\.ts)$/.test(filename)
+      ) {
+        return res.status(404).end();
+      }
+
+      const file = path.join(session.dir, filename);
+      const resolved = path.resolve(file);
+
+      if (
+        !resolved.startsWith(
+          `${path.resolve(session.dir)}${path.sep}`
+        )
+      ) {
+        return res.status(403).end();
+      }
+
+      await fsp.access(file);
+      session.lastAccess = Date.now();
+
+      res.setHeader('Content-Type', mediaType(filename));
+
+      if (filename.endsWith('.m3u8')) {
+        res.setHeader(
+          'Cache-Control',
+          'no-store, no-cache, must-revalidate'
+        );
+      } else {
+        res.setHeader(
+          'Cache-Control',
+          'private, max-age=120'
+        );
+      }
+
+      res.sendFile(resolved);
     } catch (error) {
+      if (error.code === 'ENOENT') {
+        return res.status(404).end();
+      }
+
       next(error);
     }
-  }
-
-  app.get('/api/player-media', mediaProxy);
-  app.head('/api/player-media', mediaProxy);
+  });
 }
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const session of sessions.values()) {
+    const ttl =
+      session.status === 'error'
+        ? FAILED_SESSION_TTL_MS
+        : SESSION_TTL_MS;
+
+    if (now - session.lastAccess > ttl) {
+      removeSession(session).catch(() => {});
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
+fsp.mkdir(PLAYER_ROOT, {
+  recursive: true
+}).catch(() => {});
 
 module.exports = {
   registerUniversalPlayerRoutes,
-  extractOkruMediaCandidates,
-  extractBalancedJsonStrings,
-  parseOkruJsonPayloads,
-  collectOkruMediaCandidates,
-  extractOkruCandidatesFromText,
-  selectBestMediaCandidate,
-  rewriteHlsPlaylist,
-  extractMediaFromHtml,
-  mediaKindFromUrl
+  selectInputsFromInfo,
+  buildFfmpegArguments,
+  sourceUrlForItem,
+  h264Compatible
 };

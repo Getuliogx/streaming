@@ -152,7 +152,7 @@ async function togglePlayback() {
 async function mountUniversalPlayer(item) {
   destroyPlayerSource();
   watchError.classList.add('hidden');
-  setLoading(true, 'Resolvendo a fonte para o player único…');
+  setLoading(true, 'Preparando vídeo e áudio no player único…');
 
   const response = await fetch(
     `/api/player-source/${encodeURIComponent(item.id)}`,
@@ -255,7 +255,7 @@ unifiedVideo.addEventListener('volumechange', updateVolumeButton);
 unifiedVideo.addEventListener('error', () => {
   if (unifiedVideo.error) {
     showError(
-      'A fonte não pôde ser reproduzida pelo player único.'
+      'O servidor não conseguiu preparar o vídeo e o áudio para reprodução.'
     );
   }
 });

@@ -1,0 +1,30 @@
+MINHA STREAM V10.6
+
+CORREÇÕES
+
+- OK.ru agora é resolvido pelo yt-dlp.
+- Google Drive usa a melhor faixa de vídeo e a melhor faixa de áudio.
+- FFmpeg combina vídeo e áudio.
+- O áudio é convertido para AAC, compatível com navegador.
+- O resultado é entregue em HLS ao mesmo player usado por filmes e episódios.
+- Não existe iframe no watch.js.
+
+ATUALIZAÇÃO
+
+1. Extraia o ZIP.
+2. Envie todo o conteúdo de streaming-main para a raiz do GitHub.
+3. Confirme o commit.
+4. Execute ATUALIZAR-ORACLE-PELO-GITHUB.cmd.
+
+ENDEREÇO SEM NÚMEROS
+
+O código do site já funciona com qualquer domínio porque os links são relativos.
+Para retirar o IP do endereço é necessário ter um domínio ou subdomínio e
+criar um registro DNS do tipo A apontando para 137.131.193.29.
+
+Exemplo:
+
+minhastream.seudominio.com  A  137.131.193.29
+
+Depois é necessário configurar esse nome no Nginx e emitir o certificado HTTPS.
+Isso depende do domínio exato escolhido.
