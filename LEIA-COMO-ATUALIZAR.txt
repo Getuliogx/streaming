@@ -1,0 +1,29 @@
+STREAMING V10.1 COMPLETO COM CMD
+
+Este pacote contém:
+
+- o repositório completo V10.1;
+- todas as funções solicitadas;
+- ATUALIZAR-ORACLE-PELO-GITHUB.cmd.
+
+COMO ATUALIZAR
+
+1. Extraia este ZIP.
+2. Abra a pasta streaming-main.
+3. Envie todo o conteúdo de dentro dela para a raiz do GitHub.
+4. Confirme o commit.
+5. Execute ATUALIZAR-ORACLE-PELO-GITHUB.cmd.
+
+O CMD executa somente:
+
+sudo /usr/local/sbin/minhastream-update
+
+Ele não altera diretamente Nginx, Docker, HTTPS, porta ou catálogo.
+
+FUNÇÕES DA V10.1
+
+- descrição própria de cada episódio pelo TMDb;
+- um único player para todos os episódios;
+- clicar no episódio troca o vídeo no mesmo player;
+- adicionar conteúdo em playlist/série já existente;
+- suporte para URL, OK.ru, M3U, M3U8, TXT e demais origens aceitas.

@@ -1,0 +1,30 @@
+MINHA STREAM 10.1 — PACOTE COMPLETO PARA O GITHUB
+
+Este ZIP foi criado diretamente a partir do arquivo streaming-main.zip enviado.
+
+COMO ATUALIZAR O REPOSITÓRIO
+
+1. Extraia o ZIP.
+2. Abra a pasta streaming-main.
+3. Envie todo o conteúdo dessa pasta para a raiz do repositório Getuliogx/streaming.
+4. Substitua os arquivos com o mesmo nome e confirme o commit.
+5. Use o mesmo processo de atualização da Oracle que já funcionava antes.
+
+Este pacote não contém CMD, PowerShell, configuração de Nginx, configuração
+de HTTPS, configuração de Docker nem alteração de porta da Oracle.
+
+O arquivo data/catalog.json foi preservado exatamente como estava no ZIP
+enviado. Quando GITHUB_REPO e GITHUB_TOKEN estão configurados, o site continua
+lendo o catálogo do ramo configurado no GitHub.
+
+FUNÇÕES INCLUÍDAS
+
+- descrição própria de cada episódio pelo TMDb;
+- um único player na página da série;
+- clique em episódio troca o vídeo no mesmo player;
+- adicionar novos vídeos em série/temporada existente;
+- funciona para importação por URL e por M3U/M3U8/TXT;
+- funciona com as origens aceitas pelo importador universal;
+- links repetidos não são duplicados;
+- ao acrescentar em playlist existente, nenhum item anterior é removido;
+- compatibilidade com episódios antigos que tenham tmdb_id sem tmdb_type.

@@ -1,4 +1,4 @@
-# Minha Stream V10
+# Minha Stream V10.1
 
 Site de catálogo e reprodução com filmes, séries, temporadas, episódios,
 categorias, gêneros, A–Z, TMDb e painel administrativo.
@@ -70,3 +70,13 @@ NODE_ENV=production
 
 Substitua os arquivos do projeto pelos arquivos da V10, mas preserve o seu
 catálogo atual. O pacote de atualização separado não contém `data/catalog.json`.
+
+
+## Atualização pelo GitHub
+
+Este repositório deve ser atualizado enviando todos os arquivos da pasta
+`streaming-main` para a raiz do repositório. Esta versão não altera Nginx,
+Docker, HTTPS, porta ou configuração da Oracle.
+
+A versão 10.1 também impede que uma importação destinada a uma playlist
+existente remova um item anterior com a mesma URL da página importada.

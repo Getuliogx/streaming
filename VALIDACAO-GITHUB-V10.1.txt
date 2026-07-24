@@ -1,0 +1,29 @@
+VALIDAÇÃO DO PACOTE COMPLETO PARA GITHUB — MINHA STREAM 10.1
+
+Base utilizada:
+- streaming-main.zip enviado pelo usuário.
+
+Arquivos preservados:
+- estrutura completa do repositório;
+- data/catalog.json preservado byte por byte;
+- render.yaml preservado;
+- pc-video-server preservado;
+- nenhum arquivo de Nginx, Docker, Oracle, CMD ou PowerShell foi adicionado.
+
+Validações:
+- server.js: sintaxe OK;
+- public/assets/app.js: sintaxe OK;
+- public/assets/admin.js: sintaxe OK;
+- public/assets/series.js: sintaxe OK;
+- public/assets/watch.js: sintaxe OK;
+- pc-video-server/server.js: sintaxe OK;
+- IDs usados pelo JavaScript existem nos respectivos HTMLs;
+- CSS com chaves balanceadas;
+- referências de CSS e JavaScript usam versão de cache 20260724-10.1;
+- descrição individual por episódio presente;
+- player único para séries presente;
+- adicionar em playlist existente presente;
+- ao acrescentar em playlist existente, itens anteriores não são removidos;
+- compatibilidade com tmdb_id antigo sem tmdb_type presente.
+
+Este relatório valida a estrutura e a sintaxe dos arquivos gerados.

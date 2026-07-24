@@ -36,7 +36,7 @@ const MAX_GENERIC_ITEMS = 2500;
 const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 const GENERIC_TIMEOUT_MS = 25_000;
 const OKRU_TIMEOUT_MS = 25_000;
-const IMPORTER_VERSION = '10.0.0';
+const IMPORTER_VERSION = '10.1.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -1787,9 +1787,9 @@ async function hydrateSeriesForPublic(episodes) {
   const repeatedDescriptionKey = comparableDescription(repeatedDescription);
   const sample = episodes.find(item =>
     item.content_type === 'episode' &&
-    item.tmdb_type === 'tv' &&
     Number.isInteger(Number(item.tmdb_id)) &&
-    Number(item.tmdb_id) > 0
+    Number(item.tmdb_id) > 0 &&
+    (!item.tmdb_type || item.tmdb_type === 'tv')
   );
 
   let details = null;
@@ -2142,9 +2142,13 @@ app.post('/api/admin/import-playlist', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
   try {
+    const target = req.body.target || {};
+    const appendingToExisting =
+      Boolean(cleanText(target.series_title, 180));
+
     const defaults = await resolveImportDefaults(
       req.body.defaults || {},
-      req.body.target || {}
+      target
     );
 
     const inputUrl = cleanText(req.body.url, 4000);
@@ -2154,7 +2158,9 @@ app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
     records = await enrichEpisodeRecordsWithTmdb(records);
     const result = await createManyTitles(records, {
       updateExisting: true,
-      removeSourceUrls: [cleanHttpUrl(inputUrl, 4000)]
+      removeSourceUrls: appendingToExisting
+        ? []
+        : [cleanHttpUrl(inputUrl, 4000)]
     });
     res.status(201).json({
       ...result,
@@ -2178,9 +2184,13 @@ app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
   try {
+    const target = req.body.target || {};
+    const appendingToExisting =
+      Boolean(cleanText(target.series_title, 180));
+
     const defaults = await resolveImportDefaults(
       req.body.defaults || {},
-      req.body.target || {}
+      target
     );
 
     const collection = await readOkruCollection(req.body.url);
@@ -2189,7 +2199,9 @@ app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
     const playlistUrl = normalizeOkruUrl(req.body.url).toString();
     const result = await createManyTitles(records, {
       updateExisting: true,
-      removeSourceUrls: [playlistUrl]
+      removeSourceUrls: appendingToExisting
+        ? []
+        : [playlistUrl]
     });
     res.status(201).json({
       ...result,
