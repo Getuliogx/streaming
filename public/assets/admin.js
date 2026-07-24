@@ -25,12 +25,14 @@ const importUrlButton = document.querySelector('#importUrlButton');
 const playlistUrlMessage = document.querySelector('#playlistUrlMessage');
 const playlistFile = document.querySelector('#playlistFile');
 const playlistUseFormData = document.querySelector('#playlistUseFormData');
+const playlistTarget = document.querySelector('#playlistTarget');
 const importPlaylistButton = document.querySelector('#importPlaylistButton');
 const playlistMessage = document.querySelector('#playlistMessage');
 const importerBuildBadge = document.querySelector('#importerBuildBadge');
 
 let items = [];
 let tmdbConfigured = false;
+let playlistTargets = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -94,7 +96,108 @@ function resetForm() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+function normalizeTargetText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function renderPlaylistTargets() {
+  const previousValue = playlistTarget.value;
+  const grouped = new Map();
+
+  items
+    .filter(item => item.content_type === 'episode' && item.series_title)
+    .forEach(item => {
+      const season = Number.isInteger(Number(item.season))
+        ? Number(item.season)
+        : 1;
+
+      const key = `${normalizeTargetText(item.series_title)}::${season}`;
+      const existing = grouped.get(key);
+
+      if (!existing) {
+        grouped.set(key, {
+          series_title: item.series_title,
+          season,
+          sample: item,
+          count: 1,
+          maxEpisode: Number(item.episode) || 0
+        });
+        return;
+      }
+
+      existing.count += 1;
+      existing.maxEpisode = Math.max(
+        existing.maxEpisode,
+        Number(item.episode) || 0
+      );
+
+      if (!existing.sample.tmdb_id && item.tmdb_id) {
+        existing.sample = item;
+      }
+    });
+
+  playlistTargets = [...grouped.values()]
+    .sort((a, b) =>
+      a.series_title.localeCompare(b.series_title, 'pt-BR') ||
+      a.season - b.season
+    );
+
+  playlistTarget.innerHTML = [
+    '<option value="">Nova playlist/série — usar os dados do formulário</option>',
+    ...playlistTargets.map((target, index) =>
+      `<option value="${index}">${escapeHtml(target.series_title)} — Temporada ${target.season} — ${target.count} episódio(s)</option>`
+    )
+  ].join('');
+
+  if (
+    previousValue !== '' &&
+    Number.isInteger(Number(previousValue)) &&
+    playlistTargets[Number(previousValue)]
+  ) {
+    playlistTarget.value = previousValue;
+  }
+}
+
+function selectedPlaylistTarget() {
+  if (playlistTarget.value === '') return null;
+
+  const target = playlistTargets[Number(playlistTarget.value)];
+  if (!target) return null;
+
+  return {
+    series_title: target.series_title,
+    season: target.season
+  };
+}
+
+function importRequestContext() {
+  const target = selectedPlaylistTarget();
+
+  return {
+    target,
+    defaults:
+      playlistUseFormData.checked || target
+        ? formPayload(false)
+        : { published: true }
+  };
+}
+
+function selectedTargetLabel() {
+  const target = selectedPlaylistTarget();
+
+  return target
+    ? ` em “${target.series_title}” — Temporada ${target.season}`
+    : '';
+}
+
 function renderList() {
+  renderPlaylistTargets();
+
   if (!items.length) {
     adminList.innerHTML = '<div class="empty-state"><strong>Catálogo vazio</strong><span>Adicione o primeiro conteúdo no formulário.</span></div>';
     return;
@@ -224,6 +327,19 @@ adminList.addEventListener('click', event => {
 
 contentTypeSelect.addEventListener('change', updateSeriesFields);
 
+playlistTarget.addEventListener('change', () => {
+  const target = selectedPlaylistTarget();
+
+  if (target) {
+    setMessage(
+      playlistUrlMessage,
+      `Os próximos vídeos serão acrescentados em “${target.series_title}” — Temporada ${target.season}.`
+    );
+  } else {
+    setMessage(playlistUrlMessage);
+  }
+});
+
 loginForm.addEventListener('submit', async event => {
   event.preventDefault();
   setMessage(loginMessage, 'Entrando…');
@@ -307,10 +423,14 @@ importUrlButton.addEventListener('click', async () => {
   setMessage(playlistUrlMessage, 'Abrindo o link e procurando todos os vídeos… Isso pode demorar um pouco.');
   importUrlButton.disabled = true;
   try {
-    const defaults = playlistUseFormData.checked ? formPayload(false) : { published: true };
+    const context = importRequestContext();
     const result = await api('/api/admin/import-url', {
       method: 'POST',
-      body: JSON.stringify({ url, defaults })
+      body: JSON.stringify({
+        url,
+        defaults: context.defaults,
+        target: context.target
+      })
     });
     const expectedText = result.expected ? ` de ${result.expected}` : '';
     const pageText = result.pages ? ` em ${result.pages} página(s)` : '';
@@ -319,7 +439,7 @@ importUrlButton.addEventListener('click', async () => {
       : '';
     setMessage(
       playlistUrlMessage,
-      `${result.found}${expectedText} vídeo(s) encontrado(s)${pageText}. Formato: ${result.format}. ${result.added} novo(s), ${result.updated || 0} atualizado(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} repetido(s).${incompleteText}`,
+      `${result.found}${expectedText} vídeo(s) encontrado(s)${pageText}. Formato: ${result.format}. ${result.added} novo(s), ${result.updated || 0} atualizado(s), ${result.removed || 0} item(ns) antigo(s) removido(s) e ${result.skipped} repetido(s)${selectedTargetLabel()}.${incompleteText}`,
       result.complete === false ? 'error' : 'success'
     );
     await loadItems();
@@ -345,14 +465,18 @@ importPlaylistButton.addEventListener('click', async () => {
   importPlaylistButton.disabled = true;
   try {
     const content = await file.text();
-    const defaults = playlistUseFormData.checked ? formPayload(false) : { published: true };
+    const context = importRequestContext();
     const result = await api('/api/admin/import-playlist', {
       method: 'POST',
-      body: JSON.stringify({ content, defaults })
+      body: JSON.stringify({
+        content,
+        defaults: context.defaults,
+        target: context.target
+      })
     });
     setMessage(
       playlistMessage,
-      `${result.added} item(ns) adicionado(s). ${result.skipped} link(s) repetido(s) ignorado(s).`,
+      `${result.added} item(ns) adicionado(s)${selectedTargetLabel()}. ${result.updated || 0} atualizado(s) e ${result.skipped} link(s) repetido(s) ignorado(s).`,
       'success'
     );
     await loadItems();

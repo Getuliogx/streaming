@@ -1,0 +1,18 @@
+VALIDAÇÃO DA MINHA STREAM V10
+
+- server.js: sintaxe OK
+- public/assets/app.js: sintaxe OK
+- public/assets/watch.js: sintaxe OK
+- public/assets/admin.js: sintaxe OK
+- public/assets/series.js: sintaxe OK
+- public/admin.html: todos os IDs usados pelo JavaScript existem
+- public/series.html: todos os IDs usados pelo JavaScript existem
+- Descrições individuais do TMDb: presentes
+- Correção também para episódios antigos ao abrir a série: presente
+- Um único player na página da série: presente
+- Troca de episódio sem abrir outra página: presente
+- Adicionar por URL em playlist existente: presente
+- Adicionar por arquivo em playlist existente: presente
+- CSS: chaves balanceadas
+
+A validação foi feita nos arquivos gerados. O funcionamento com sites externos ainda depende de eles permitirem acesso, incorporação e não usarem DRM.

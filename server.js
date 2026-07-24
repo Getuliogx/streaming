@@ -29,20 +29,21 @@ const ALLOWED_CONTENT_TYPES = new Set(['movie', 'episode']);
 const ALLOWED_SOURCE_TYPES = new Set(['okru', 'gdrive', 'direct', 'hls', 'iframe']);
 const ALLOWED_TMDB_TYPES = new Set(['movie', 'tv']);
 const MAX_PLAYLIST_ITEMS = 1500;
-const MAX_OKRU_PAGES = 90;
-const MAX_OKRU_ITEMS = 1500;
-const MAX_GENERIC_PAGES = 20;
-const MAX_GENERIC_ITEMS = 1500;
+const MAX_OKRU_PAGES = 140;
+const MAX_OKRU_ITEMS = 2500;
+const MAX_GENERIC_PAGES = 50;
+const MAX_GENERIC_ITEMS = 2500;
 const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 const GENERIC_TIMEOUT_MS = 25_000;
 const OKRU_TIMEOUT_MS = 25_000;
-const IMPORTER_VERSION = '9.0.0';
+const IMPORTER_VERSION = '10.0.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
 let resolvedCatalogBranch = null;
 let mutationQueue = Promise.resolve();
 const okruCookieJar = new Map();
+const seriesTmdbCache = new Map();
 
 app.set('trust proxy', 1);
 app.use(helmet({
@@ -1126,8 +1127,10 @@ async function enrichEpisodeRecordsWithTmdb(records) {
   if (!HAS_TMDB || !records.length) return records;
   const sample = records.find(record => record.tmdb_type === 'tv' && record.tmdb_id && record.content_type === 'episode');
   if (!sample) return records;
+
   const seasons = [...new Set(records.map(record => record.season).filter(Number.isInteger))];
   const episodeData = new Map();
+
   await mapWithConcurrency(seasons, 3, async season => {
     try {
       const data = await tmdbRequest(`/tv/${sample.tmdb_id}/season/${season}`);
@@ -1136,17 +1139,27 @@ async function enrichEpisodeRecordsWithTmdb(records) {
       }
     } catch {}
   });
+
   return records.map(record => {
     const tmdbEpisode = episodeData.get(`${record.season}:${record.episode}`);
     if (!tmdbEpisode) return record;
+
     const currentTitle = cleanText(record.title, 180);
     const fallbackTitle = /^(?:epis[óo]dio|ep)\s*\d+$/i.test(currentTitle) || isGenericVideoTitle(currentTitle);
+    const episodeOverview = cleanText(tmdbEpisode.overview, 5000);
+
     return {
       ...record,
-      // Preserva o nome que veio do OK.ru. O TMDB só completa quando o título é genérico.
-      title: fallbackTitle && tmdbEpisode.name ? cleanText(tmdbEpisode.name, 180) : currentTitle,
-      episode_image_url: tmdbImage(tmdbEpisode.still_path, 'w780') || record.episode_image_url || '',
-      description: record.description || cleanText(tmdbEpisode.overview, 5000)
+      title: fallbackTitle && tmdbEpisode.name
+        ? cleanText(tmdbEpisode.name, 180)
+        : currentTitle,
+      episode_image_url:
+        tmdbImage(tmdbEpisode.still_path, 'w780') ||
+        record.episode_image_url ||
+        '',
+      // Para episódios importados, a descrição do episódio tem prioridade.
+      // Isso impede que a descrição geral da série seja repetida em todos.
+      description: episodeOverview || cleanText(record.description, 5000)
     };
   });
 }
@@ -1677,6 +1690,249 @@ function tmdbImage(pathname, size = 'w500') {
   return pathname ? `https://image.tmdb.org/t/p/${size}${pathname}` : '';
 }
 
+function comparableDescription(value) {
+  return cleanText(value, 5000)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function likelySeriesDescriptionFromCatalog(episodes) {
+  const counts = new Map();
+
+  for (const item of episodes) {
+    const description = cleanText(item.description, 5000);
+    const key = comparableDescription(description);
+    if (!key) continue;
+
+    const current = counts.get(key) || {
+      count: 0,
+      description
+    };
+
+    current.count += 1;
+    counts.set(key, current);
+  }
+
+  const repeated = [...counts.values()]
+    .filter(entry => entry.count >= 2)
+    .sort((a, b) => b.count - a.count)[0];
+
+  return repeated ? repeated.description : '';
+}
+
+async function loadTmdbSeriesBundle(tmdbId, seasons) {
+  const normalizedSeasons = [...new Set(seasons.filter(Number.isInteger))]
+    .sort((a, b) => a - b);
+
+  const cacheKey = `${tmdbId}:${normalizedSeasons.join(',')}`;
+  const cached = seriesTmdbCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.createdAt < 20 * 60 * 1000) {
+    return cached.value;
+  }
+
+  const detailsPromise = tmdbRequest(`/tv/${tmdbId}`).catch(() => null);
+  const seasonResults = await mapWithConcurrency(
+    normalizedSeasons,
+    3,
+    async season => {
+      try {
+        return {
+          season,
+          data: await tmdbRequest(`/tv/${tmdbId}/season/${season}`)
+        };
+      } catch {
+        return {
+          season,
+          data: null
+        };
+      }
+    }
+  );
+
+  const details = await detailsPromise;
+  const episodeData = new Map();
+
+  for (const result of seasonResults) {
+    for (const episode of result.data?.episodes || []) {
+      episodeData.set(
+        `${result.season}:${episode.episode_number}`,
+        episode
+      );
+    }
+  }
+
+  const value = {
+    details,
+    episodeData
+  };
+
+  seriesTmdbCache.set(cacheKey, {
+    createdAt: Date.now(),
+    value
+  });
+
+  while (seriesTmdbCache.size > 30) {
+    seriesTmdbCache.delete(seriesTmdbCache.keys().next().value);
+  }
+
+  return value;
+}
+
+async function hydrateSeriesForPublic(episodes) {
+  const repeatedDescription = likelySeriesDescriptionFromCatalog(episodes);
+  const repeatedDescriptionKey = comparableDescription(repeatedDescription);
+  const sample = episodes.find(item =>
+    item.content_type === 'episode' &&
+    item.tmdb_type === 'tv' &&
+    Number.isInteger(Number(item.tmdb_id)) &&
+    Number(item.tmdb_id) > 0
+  );
+
+  let details = null;
+  let episodeData = new Map();
+
+  if (HAS_TMDB && sample) {
+    const bundle = await loadTmdbSeriesBundle(
+      Number(sample.tmdb_id),
+      episodes.map(item => Number(item.season)).filter(Number.isInteger)
+    );
+
+    details = bundle.details;
+    episodeData = bundle.episodeData;
+  }
+
+  const seriesDescription =
+    cleanText(details?.overview, 5000) ||
+    repeatedDescription ||
+    '';
+
+  const seriesDescriptionKey = comparableDescription(seriesDescription);
+
+  const hydratedEpisodes = episodes.map(item => {
+    const tmdbEpisode = episodeData.get(`${item.season}:${item.episode}`);
+    const storedDescription = cleanText(item.description, 5000);
+    const storedKey = comparableDescription(storedDescription);
+
+    const storedLooksLikeSeriesDescription = Boolean(
+      storedKey &&
+      (
+        storedKey === repeatedDescriptionKey ||
+        storedKey === seriesDescriptionKey
+      )
+    );
+
+    const episodeDescription =
+      cleanText(tmdbEpisode?.overview, 5000) ||
+      (storedLooksLikeSeriesDescription ? '' : storedDescription);
+
+    const currentTitle = cleanText(item.title, 180);
+    const genericTitle =
+      /^(?:epis[óo]dio|ep)\s*\d+$/i.test(currentTitle) ||
+      isGenericVideoTitle(currentTitle);
+
+    return {
+      ...item,
+      title:
+        genericTitle && tmdbEpisode?.name
+          ? cleanText(tmdbEpisode.name, 180)
+          : currentTitle,
+      episode_image_url:
+        tmdbImage(tmdbEpisode?.still_path, 'w780') ||
+        item.episode_image_url ||
+        '',
+      description: episodeDescription
+    };
+  });
+
+  const first = hydratedEpisodes[0] || {};
+
+  return {
+    title: first.series_title || details?.name || '',
+    description: seriesDescription,
+    year:
+      details?.first_air_date && /^\d{4}/.test(details.first_air_date)
+        ? Number(details.first_air_date.slice(0, 4))
+        : first.year || null,
+    genres:
+      Array.isArray(details?.genres) && details.genres.length
+        ? details.genres.map(genre => genre.name).join(', ')
+        : first.genres || '',
+    cover_url:
+      tmdbImage(details?.poster_path, 'w500') ||
+      first.cover_url ||
+      '',
+    backdrop_url:
+      tmdbImage(details?.backdrop_path, 'original') ||
+      first.backdrop_url ||
+      first.cover_url ||
+      '',
+    episodes: hydratedEpisodes
+  };
+}
+
+async function resolveImportDefaults(defaults = {}, target = {}) {
+  const targetSeriesTitle = cleanText(target.series_title, 180);
+
+  if (!targetSeriesTitle) {
+    return defaults;
+  }
+
+  const requestedSeason = cleanNullableInt(target.season);
+  const catalog = await readCatalog({ force: true });
+  const normalizedTarget = targetSeriesTitle.toLocaleLowerCase('pt-BR');
+
+  const matching = catalog.filter(item =>
+    item.content_type === 'episode' &&
+    cleanText(item.series_title, 180).toLocaleLowerCase('pt-BR') === normalizedTarget &&
+    (
+      requestedSeason === null ||
+      cleanNullableInt(item.season) === requestedSeason
+    )
+  );
+
+  if (!matching.length) {
+    throw new Error('A playlist/série escolhida não existe mais.');
+  }
+
+  const season = requestedSeason ?? cleanNullableInt(matching[0].season) ?? 1;
+  const sameSeason = matching.filter(item =>
+    (cleanNullableInt(item.season) ?? 1) === season
+  );
+
+  const sample =
+    sameSeason.find(item => item.tmdb_type === 'tv' && item.tmdb_id) ||
+    sameSeason[0] ||
+    matching[0];
+
+  const nextEpisode =
+    sameSeason.reduce(
+      (maximum, item) =>
+        Math.max(maximum, cleanNullableInt(item.episode) ?? 0),
+      0
+    ) + 1;
+
+  return {
+    ...defaults,
+    content_type: 'episode',
+    series_title: sample.series_title,
+    season,
+    episode: nextEpisode,
+    // Não copia a descrição geral da série para os novos episódios.
+    description: '',
+    year: sample.year ?? defaults.year ?? null,
+    genres: sample.genres || defaults.genres || '',
+    category: sample.category || defaults.category || '',
+    cover_url: sample.cover_url || defaults.cover_url || '',
+    backdrop_url: sample.backdrop_url || defaults.backdrop_url || '',
+    tmdb_id: sample.tmdb_id ?? defaults.tmdb_id ?? null,
+    tmdb_type: sample.tmdb_type || defaults.tmdb_type || ''
+  };
+}
+
 function requireAdmin(req, res, next) {
   if (req.session?.isAdmin) return next();
   return res.status(401).json({ error: 'Entre com a senha do painel.' });
@@ -1698,17 +1954,69 @@ app.get('/api/catalog', async (req, res, next) => {
 app.get('/api/series', async (req, res, next) => {
   try {
     const episodes = await findSeries(req.query.title, true);
-    if (!episodes.length) return res.status(404).json({ error: 'Série não encontrada.' });
-    res.json({ title: episodes[0].series_title, episodes });
-  } catch (error) { next(error); }
+
+    if (!episodes.length) {
+      return res.status(404).json({
+        error: 'Série não encontrada.'
+      });
+    }
+
+    const series = await hydrateSeriesForPublic(episodes);
+
+    res.json({
+      title: series.title,
+      series: {
+        title: series.title,
+        description: series.description,
+        year: series.year,
+        genres: series.genres,
+        cover_url: series.cover_url,
+        backdrop_url: series.backdrop_url
+      },
+      episodes: series.episodes
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/catalog/:id', async (req, res, next) => {
   try {
-    const item = await findTitle(req.params.id, true);
-    if (!item) return res.status(404).json({ error: 'Conteúdo não encontrado.' });
+    let item = await findTitle(req.params.id, true);
+
+    if (!item) {
+      return res.status(404).json({
+        error: 'Conteúdo não encontrado.'
+      });
+    }
+
+    // Também corrige a descrição quando um episódio é aberto diretamente.
+    if (
+      item.content_type === 'episode' &&
+      item.series_title
+    ) {
+      const seriesEpisodes = await findSeries(
+        item.series_title,
+        true
+      );
+
+      const hydrated = await hydrateSeriesForPublic(
+        seriesEpisodes
+      );
+
+      item =
+        hydrated.episodes.find(
+          episode =>
+            Number(episode.id) ===
+            Number(item.id)
+        ) ||
+        item;
+    }
+
     res.json(item);
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/api/admin/session', (req, res) => {
@@ -1804,10 +2112,25 @@ app.post('/api/admin/titles', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-playlist', requireAdmin, async (req, res, next) => {
   try {
-    let records = parsePlaylist(req.body.content, req.body.defaults || {});
+    const defaults = await resolveImportDefaults(
+      req.body.defaults || {},
+      req.body.target || {}
+    );
+
+    let records = parsePlaylist(req.body.content, defaults);
     records = await enrichEpisodeRecordsWithTmdb(records);
-    const result = await createManyTitles(records);
-    res.status(201).json({ ...result, parsed: records.length });
+
+    const result = await createManyTitles(records, {
+      updateExisting: true
+    });
+
+    res.status(201).json({
+      ...result,
+      parsed: records.length,
+      target_series: defaults.series_title || '',
+      target_season: defaults.season ?? null,
+      importer_version: IMPORTER_VERSION
+    });
   } catch (error) {
     if (/playlist|Nenhum|link|Digite|Cole|inválido|série/i.test(error.message)) {
       return res.status(400).json({ error: error.message });
@@ -1819,7 +2142,11 @@ app.post('/api/admin/import-playlist', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
   try {
-    const defaults = req.body.defaults || {};
+    const defaults = await resolveImportDefaults(
+      req.body.defaults || {},
+      req.body.target || {}
+    );
+
     const inputUrl = cleanText(req.body.url, 4000);
     if (!inputUrl) return res.status(400).json({ error: 'Cole o link da playlist, feed ou página.' });
     const collection = await readGenericCollection(inputUrl);
@@ -1837,7 +2164,9 @@ app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
       pages: collection.pages,
       expected: collection.expected || null,
       complete: collection.complete !== false,
-      importer_version: IMPORTER_VERSION
+      importer_version: IMPORTER_VERSION,
+      target_series: defaults.series_title || '',
+      target_season: defaults.season ?? null
     });
   } catch (error) {
     if (/link|playlist|página|site|vídeo|feed|pública|acesso|endereço|JavaScript|login|bloque/i.test(error.message)) {
@@ -1849,7 +2178,11 @@ app.post('/api/admin/import-url', requireAdmin, async (req, res, next) => {
 
 app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
   try {
-    const defaults = req.body.defaults || {};
+    const defaults = await resolveImportDefaults(
+      req.body.defaults || {},
+      req.body.target || {}
+    );
+
     const collection = await readOkruCollection(req.body.url);
     let records = buildRecordsFromOkru(collection.entries, defaults, collection.title);
     records = await enrichEpisodeRecordsWithTmdb(records);
@@ -1865,7 +2198,9 @@ app.post('/api/admin/import-okru', requireAdmin, async (req, res, next) => {
       found: collection.entries.length,
       expected: collection.expectedCount || null,
       complete: collection.complete !== false,
-      importer_version: IMPORTER_VERSION
+      importer_version: IMPORTER_VERSION,
+      target_series: defaults.series_title || '',
+      target_season: defaults.season ?? null
     });
   } catch (error) {
     if (/OK\.ru|playlist|canal|link|pública|vídeo|endereço|recusou|demorou/i.test(error.message)) {

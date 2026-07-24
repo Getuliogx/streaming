@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "9.0.0",
+  "version": "10.0.0",
   "private": true,
-  "description": "Site de streaming simples com importador universal de playlists por link, filmes e séries separados, categorias, gêneros, A-Z e TMDB.",
+  "description": "Site de streaming com player único para séries, descrições individuais de episódios, importador universal e adição em playlists existentes.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

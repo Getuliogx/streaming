@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Painel | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260721-9">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260724-10">
 </head>
 <body>
   <header class="topbar">
@@ -36,7 +36,7 @@
           <div>
             <p class="eyebrow">CADASTRO</p>
             <h1 id="formHeading">Adicionar conteúdo</h1>
-            <span id="importerBuildBadge" class="build-badge">IMPORTADOR UNIVERSAL V9</span>
+            <span id="importerBuildBadge" class="build-badge">IMPORTADOR UNIVERSAL V10</span>
           </div>
           <button id="resetButton" class="text-button" type="button">Limpar</button>
         </div>
@@ -53,8 +53,16 @@
           <label>Link da playlist, página ou feed
             <input id="playlistUrl" type="url" placeholder="https://site.com/playlist-ou-pagina" autocomplete="off">
           </label>
-          <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB</label>
-          <button id="importUrlButton" class="primary-button okru-import-button" type="button">▶ Importar todos os vídeos encontrados</button>
+
+          <label>Adicionar os vídeos em
+            <select id="playlistTarget">
+              <option value="">Nova playlist/série — usar os dados do formulário</option>
+            </select>
+          </label>
+          <p class="source-help">Essa opção funciona para qualquer origem aceita: OK.ru, M3U, M3U8, TXT, JSON, RSS/XML, páginas HTML, links diretos e outros sites públicos sem DRM.</p>
+
+          <label class="check-line"><input id="playlistUseFormData" type="checkbox" checked> Usar a série, a capa, a temporada inicial e os dados escolhidos no TMDB quando uma playlist existente não estiver selecionada</label>
+          <button id="importUrlButton" class="primary-button okru-import-button" type="button">▶ Importar e adicionar todos os vídeos encontrados</button>
           <p id="playlistUrlMessage" class="form-message"></p>
           <p class="source-help">Páginas que exigem login, carregam a lista apenas por JavaScript, bloqueiam robôs ou usam DRM podem não permitir importação automática.</p>
         </section>
@@ -165,12 +173,12 @@
         </form>
 
         <details class="playlist-box">
-          <summary>Importar arquivo M3U, M3U8 ou TXT do computador</summary>
+          <summary>Adicionar arquivo M3U, M3U8 ou TXT em uma playlist nova ou existente</summary>
           <div class="stack-form details-fields">
             <label>Arquivo da playlist
               <input id="playlistFile" type="file" accept=".m3u,.m3u8,.txt,text/plain,audio/x-mpegurl,application/vnd.apple.mpegurl">
             </label>
-            <button id="importPlaylistButton" class="ghost-button" type="button">Importar arquivo</button>
+            <button id="importPlaylistButton" class="ghost-button" type="button">Importar e adicionar arquivo</button>
             <p id="playlistMessage" class="form-message"></p>
           </div>
         </details>
@@ -190,6 +198,6 @@
     </section>
   </main>
 
-  <script src="/assets/admin.js?v=20260721-9" defer></script>
+  <script src="/assets/admin.js?v=20260724-10" defer></script>
 </body>
 </html>

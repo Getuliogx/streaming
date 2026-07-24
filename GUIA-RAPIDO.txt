@@ -1,29 +1,19 @@
-MINHA STREAM — ATUALIZAÇÃO RÁPIDA
+MINHA STREAM V10 — ATUALIZAÇÃO RÁPIDA
 
-1. Envie os arquivos por cima dos antigos no GitHub.
-2. Aguarde o Render terminar o novo deploy.
-3. Abra /admin.
+USE O PACOTE:
+ATUALIZACAO-V10-SEM-APAGAR-CATALOGO.zip
 
-VARIÁVEIS QUE CONTINUAM NO RENDER
+Ele não contém data/catalog.json e não apaga o catálogo atual.
 
-ADMIN_PASSWORD = sua senha
-GITHUB_TOKEN = seu token
-GITHUB_REPO = usuario/repositorio
-NODE_ENV = production
-TMDB_API_KEY = sua chave do TMDB
+Depois da atualização:
 
-NÃO TEM POSTGRESQL.
+1. Aguarde o novo deploy.
+2. Abra /admin.
+3. Confirme o selo IMPORTADOR UNIVERSAL V10.
+4. Escolha uma série existente no campo “Adicionar os vídeos em”.
+5. Importe o novo link ou arquivo.
+6. Abra a página da série.
+7. Os episódios devem trocar dentro do único player da página.
 
-NOVIDADES DESTA VERSÃO
-
-- importa playlist/canal do OK.ru pelo link da página;
-- exemplo aceito: https://ok.ru/video/c23729458;
-- tenta puxar todas as páginas;
-- pega o título real dos vídeos;
-- entende vários formatos de temporada e episódio;
-- pode completar títulos genéricos usando o TMDB;
-- seleção visual de temporadas e episódios;
-- cartões de episódios;
-- botões de episódio anterior e próximo.
-
-Um site externo comum só abre dentro do player quando ele permite iframe. O sistema não remove DRM nem bloqueios de incorporação.
+TMDB_API_KEY precisa continuar configurada para preencher as descrições
+individuais dos episódios.

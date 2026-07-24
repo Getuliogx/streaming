@@ -590,6 +590,65 @@ details summary {
   opacity: .45;
 }
 
+
+
+.series-player-section {
+  width: min(1240px, 94%);
+  margin: 34px auto 10px;
+  scroll-margin-top: 92px;
+}
+
+.series-player-details {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 25px 4px 10px;
+}
+
+.series-player-details > div:first-child {
+  min-width: 0;
+}
+
+.series-player-details h2 {
+  margin: 4px 0 9px;
+  font-size: clamp(1.7rem, 4vw, 3rem);
+  letter-spacing: -.045em;
+}
+
+.series-player-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.episode-visual-card {
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.episode-visual-card.active {
+  border-color: var(--accent-2);
+  background: rgba(124, 92, 255, .14);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, .12);
+}
+
+.episode-visual-card:focus-visible {
+  outline: 3px solid rgba(124, 92, 255, .45);
+  outline-offset: 3px;
+}
+
+.episode-visual-card.active .episode-play-icon {
+  background: #ffffff;
+  color: var(--accent);
+}
+
 .episode-visual-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
@@ -902,7 +961,8 @@ details summary {
   font-size: .9rem;
 }
 
-.okru-import-hero input[type="url"] {
+.okru-import-hero input[type="url"],
+.okru-import-hero select {
   width: 100%;
   padding: 14px 15px;
   border: 1px solid rgba(255, 255, 255, .18);
@@ -912,7 +972,8 @@ details summary {
   background: #0b0e14;
 }
 
-.okru-import-hero input[type="url"]:focus {
+.okru-import-hero input[type="url"]:focus,
+.okru-import-hero select:focus {
   border-color: var(--accent-2);
   box-shadow: 0 0 0 4px rgba(124, 92, 255, .18);
 }
@@ -1064,4 +1125,20 @@ details summary {
   .group-heading > span { display: none; }
   .filter-bar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 5px; }
   .filter-chip { flex: 0 0 auto; }
+}
+
+
+@media (max-width: 760px) {
+  .series-player-details {
+    flex-direction: column;
+  }
+
+  .series-player-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .series-player-actions .ghost-button {
+    flex: 1 1 180px;
+  }
 }

@@ -1,26 +1,72 @@
-# Minha Stream V8
+# Minha Stream V10
 
-Site simples hospedado no Render, com catálogo salvo no GitHub.
+Site de catálogo e reprodução com filmes, séries, temporadas, episódios,
+categorias, gêneros, A–Z, TMDb e painel administrativo.
 
-## Recursos
+## Mudanças da V10
 
-- Filmes e séries em áreas separadas.
-- Menu de Categorias.
-- Menu de Gêneros.
-- Lista A–Z.
-- Página de séries com temporadas e episódios em cartões.
-- Capas e dados do TMDB.
-- Importação de playlist do OK.ru por link.
-- Importação de arquivos M3U, M3U8 e TXT.
-- Suporte a OK.ru, Google Drive, HLS, MP4 direto e sites que permitam iframe.
+### Um único player para a série
 
-## Categoria
+A página `series.html` agora possui somente um player. Ao clicar em qualquer
+episódio, o mesmo player troca de vídeo sem abrir uma página diferente para
+cada episódio.
 
-No painel, preencha o campo **Categoria** com algo como `Infantil`, `Anime`, `Novela`, `Documentário` ou `Nacional`.
-É possível usar mais de uma categoria separando por vírgula.
+O player continua aceitando:
 
-Os gêneros vêm automaticamente do TMDB e podem ser editados em **Mais opções → Gêneros**.
+- OK.ru;
+- Google Drive;
+- HLS/M3U8;
+- vídeo direto;
+- sites que permitem iframe.
+
+### Descrição própria de cada episódio
+
+Quando a série possui identificação do TMDb, o servidor busca o resumo
+específico de cada temporada e episódio. A descrição geral da série não é mais
+repetida em todos os cartões.
+
+Isso também corrige episódios antigos ao abrir a página, sem exigir que cada
+item seja editado manualmente.
+
+### Adicionar em playlist/série existente
+
+No painel administrativo existe a opção:
+
+`Adicionar os vídeos em`
+
+Ela lista todas as séries e temporadas já cadastradas. Ao escolher uma delas,
+os novos vídeos são acrescentados depois do maior número de episódio existente.
+
+A opção funciona nos dois importadores:
+
+- importação por link;
+- importação de arquivo M3U/M3U8/TXT.
+
+E vale para todas as origens já aceitas pelo importador universal:
+
+- OK.ru;
+- M3U, M3U8 e TXT por URL;
+- JSON;
+- RSS/XML;
+- páginas HTML públicas;
+- links diretos;
+- HLS;
+- outros sites públicos sem DRM que exponham os links no conteúdo da página.
+
+Links repetidos não são duplicados.
+
+## Variáveis
+
+```text
+ADMIN_PASSWORD=sua_senha
+SESSION_SECRET=uma_chave_longa
+GITHUB_TOKEN=seu_token
+GITHUB_REPO=Getuliogx/streaming
+TMDB_API_KEY=sua_chave_tmdb
+NODE_ENV=production
+```
 
 ## Atualização
 
-Envie todos os arquivos para a raiz do repositório e, no Render, use **Manual Deploy → Clear build cache & deploy**.
+Substitua os arquivos do projeto pelos arquivos da V10, mas preserve o seu
+catálogo atual. O pacote de atualização separado não contém `data/catalog.json`.
