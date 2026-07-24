@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b10">
   <title>Assistir | Minha Stream</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260724-10.3">
+  <link rel="stylesheet" href="/assets/styles.css?v=20260724-10.4">
 </head>
 <body class="watch-page">
   <header class="topbar">
@@ -17,9 +17,77 @@
   </header>
 
   <main class="watch-main">
-    <section class="player-shell">
-      <div id="playerMount" class="player-mount">
-        <div class="loading">Carregando player…</div>
+    <section class="player-shell unified-player-shell">
+      <div id="playerMount" class="player-mount unified-player" tabindex="0">
+        <video
+          id="unifiedVideo"
+          class="unified-player-video"
+          playsinline
+          preload="metadata"
+        ></video>
+
+        <div id="playerLoading" class="unified-player-loading">
+          <span></span>
+          <b>Preparando vídeo…</b>
+        </div>
+
+        <button
+          id="playerBigPlay"
+          class="unified-player-big-play hidden"
+          type="button"
+          aria-label="Reproduzir"
+        >▶</button>
+
+        <div class="unified-player-gradient"></div>
+
+        <div id="playerControls" class="unified-player-controls">
+          <button
+            id="playerPlayPause"
+            class="unified-player-control-button"
+            type="button"
+            aria-label="Reproduzir"
+          >▶</button>
+
+          <span id="playerCurrentTime" class="unified-player-time">0:00</span>
+
+          <input
+            id="playerProgress"
+            class="unified-player-progress"
+            type="range"
+            min="0"
+            max="1000"
+            value="0"
+            step="1"
+            aria-label="Posição do vídeo"
+          >
+
+          <span id="playerDuration" class="unified-player-time">0:00</span>
+
+          <button
+            id="playerMute"
+            class="unified-player-control-button"
+            type="button"
+            aria-label="Silenciar"
+          >🔊</button>
+
+          <input
+            id="playerVolume"
+            class="unified-player-volume"
+            type="range"
+            min="0"
+            max="1"
+            value="1"
+            step="0.05"
+            aria-label="Volume"
+          >
+
+          <button
+            id="playerFullscreen"
+            class="unified-player-control-button"
+            type="button"
+            aria-label="Tela cheia"
+          >⛶</button>
+        </div>
       </div>
     </section>
 
@@ -55,6 +123,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
-  <script src="/assets/watch.js?v=20260724-10.3" defer></script>
+  <script src="/assets/watch.js?v=20260724-10.4" defer></script>
 </body>
 </html>

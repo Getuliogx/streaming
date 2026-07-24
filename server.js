@@ -11,6 +11,7 @@ const session = require('express-session');
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const { registerUniversalPlayerRoutes } = require('./universal-player');
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -36,7 +37,7 @@ const MAX_GENERIC_ITEMS = 2500;
 const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 const GENERIC_TIMEOUT_MS = 25_000;
 const OKRU_TIMEOUT_MS = 25_000;
-const IMPORTER_VERSION = '10.1.0';
+const IMPORTER_VERSION = '10.4.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
@@ -1941,6 +1942,16 @@ function requireAdmin(req, res, next) {
 function storageLabel() {
   return HAS_GITHUB_STORAGE ? 'github' : 'local';
 }
+
+registerUniversalPlayerRoutes(app, {
+  findTitle,
+  fetchOkruHtml,
+  fetchPublicResource,
+  secret:
+    process.env.SESSION_SECRET ||
+    GITHUB_TOKEN ||
+    process.env.ADMIN_PASSWORD
+});
 
 app.get('/health', (req, res) => res.json({ ok: true, storage: storageLabel(), tmdb: HAS_TMDB }));
 

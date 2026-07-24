@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "10.3.0",
+  "version": "10.4.0",
   "private": true,
-  "description": "Minha Stream com um único watch.html para filmes e episódios, descrições individuais e importação em playlists existentes.",
+  "description": "Minha Stream com um único player HTML5 e os mesmos controles para filmes e episódios, sem players incorporados dos sites.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

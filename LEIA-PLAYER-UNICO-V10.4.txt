@@ -1,0 +1,31 @@
+MINHA STREAM V10.4 — PLAYER REALMENTE ÚNICO
+
+Nesta versão não existe mais escolha entre iframe do OK.ru, iframe do Drive
+e vídeo HTML5.
+
+Filmes e episódios usam exatamente:
+
+- public/watch.html;
+- public/assets/watch.js;
+- um único elemento <video>;
+- uma única barra de controles;
+- o mesmo botão central;
+- o mesmo progresso, volume e tela cheia.
+
+O servidor resolve as fontes para o player único:
+
+- OK.ru: lê os arquivos de mídia fornecidos pelos metadados públicos;
+- Google Drive: usa o arquivo público pelo endereço de download;
+- HLS/M3U8: usa HLS.js com o mesmo player;
+- MP4/WebM e links diretos: usa o mesmo player;
+- páginas e iframes: procura o arquivo MP4/WebM/HLS exposto pela página.
+
+Não há criação de iframe em watch.js. Quando uma página externa não expõe
+nenhum arquivo reproduzível, o site mostra uma mensagem de erro dentro do
+mesmo player em vez de abrir o player diferente daquele site.
+
+ATUALIZAÇÃO
+
+1. Envie todo o conteúdo da pasta streaming-main para a raiz do GitHub.
+2. Confirme o commit.
+3. Execute ATUALIZAR-ORACLE-PELO-GITHUB.cmd.

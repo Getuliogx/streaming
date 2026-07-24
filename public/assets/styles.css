@@ -1142,3 +1142,238 @@ details summary {
     flex: 1 1 180px;
   }
 }
+
+
+/* ==============================================================
+   PLAYER UNIVERSAL V10.4
+   Um único <video> e uma única barra para filmes e episódios.
+   ============================================================== */
+.unified-player-shell {
+  background: #000;
+}
+
+.player-mount.unified-player {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  min-height: 240px;
+  outline: none;
+  background:
+    radial-gradient(circle at center, rgba(124, 92, 255, .08), transparent 38%),
+    #000;
+  user-select: none;
+}
+
+.unified-player-video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  background: #000;
+  cursor: pointer;
+}
+
+.unified-player-gradient {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 35%;
+  pointer-events: none;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .86));
+  transition: opacity .2s ease;
+}
+
+.unified-player-big-play {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  width: clamp(70px, 9vw, 94px);
+  height: clamp(70px, 9vw, 94px);
+  padding: 0 0 0 6px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(10, 11, 16, .82);
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, .45),
+    0 0 0 8px rgba(124, 92, 255, .12);
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition:
+    transform .18s ease,
+    background .18s ease;
+}
+
+.unified-player-big-play:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  background: var(--accent);
+}
+
+.unified-player-loading {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 13px;
+  color: #fff;
+  background: rgba(0, 0, 0, .7);
+  pointer-events: none;
+}
+
+.unified-player-loading span {
+  width: 42px;
+  height: 42px;
+  border: 4px solid rgba(255, 255, 255, .18);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: unified-player-spin .8s linear infinite;
+}
+
+.unified-player-loading b {
+  font-size: .85rem;
+  letter-spacing: .02em;
+}
+
+@keyframes unified-player-spin {
+  to { transform: rotate(360deg); }
+}
+
+.unified-player-controls {
+  position: absolute;
+  z-index: 4;
+  right: 15px;
+  bottom: 12px;
+  left: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 14px;
+  background: rgba(10, 11, 16, .74);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .34);
+  backdrop-filter: blur(14px);
+  transition:
+    opacity .2s ease,
+    transform .2s ease;
+}
+
+.unified-player-control-button {
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.unified-player-control-button:hover,
+.unified-player-control-button:focus-visible {
+  background: rgba(124, 92, 255, .34);
+}
+
+.unified-player-time {
+  flex: 0 0 auto;
+  min-width: 38px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  font-size: .76rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.unified-player-progress,
+.unified-player-volume {
+  height: 5px;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+
+.unified-player-progress {
+  flex: 1 1 auto;
+  min-width: 80px;
+}
+
+.unified-player-volume {
+  flex: 0 1 90px;
+  width: 90px;
+}
+
+.unified-player.controls-hidden .unified-player-controls,
+.unified-player.controls-hidden .unified-player-gradient {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.unified-player:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--accent-2);
+}
+
+.unified-player:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.unified-player:fullscreen .unified-player-video {
+  object-fit: contain;
+}
+
+@media (max-width: 720px) {
+  .unified-player-controls {
+    right: 7px;
+    bottom: 7px;
+    left: 7px;
+    gap: 4px;
+    padding: 5px 6px;
+    border-radius: 11px;
+  }
+
+  .unified-player-control-button {
+    flex-basis: 34px;
+    width: 34px;
+    height: 34px;
+  }
+
+  .unified-player-time {
+    min-width: 33px;
+    font-size: .68rem;
+  }
+
+  .unified-player-volume {
+    display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .player-mount.unified-player {
+    min-height: 205px;
+  }
+
+  .unified-player-controls {
+    gap: 2px;
+  }
+
+  .unified-player-time:nth-of-type(2) {
+    display: none;
+  }
+}
