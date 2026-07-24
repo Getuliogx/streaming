@@ -1,0 +1,26 @@
+MINHA STREAM V10.5 — OK.RU CORRIGIDO
+
+Correção aplicada no leitor do OK.ru:
+
+- aceita JSON normal;
+- aceita prefixos de proteção;
+- aceita dois ou mais JSONs concatenados;
+- aceita JSON dentro de strings;
+- aceita metadados dentro de data-options;
+- tenta a API de metadados;
+- tenta a página normal do vídeo;
+- tenta videoembed;
+- tenta a página móvel;
+- não mostra mais o erro bruto:
+  Unexpected non-whitespace character after JSON.
+
+O vídeo continua sendo reproduzido pelo mesmo player único usado para filmes
+e episódios. Não foi adicionado iframe ao watch.js.
+
+O vídeo do OK.ru precisa estar público e disponível sem login.
+
+ATUALIZAÇÃO
+
+1. Envie todo o conteúdo da pasta streaming-main para a raiz do GitHub.
+2. Confirme o commit.
+3. Execute ATUALIZAR-ORACLE-PELO-GITHUB.cmd.

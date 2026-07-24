@@ -182,6 +182,207 @@ function qualityScore(name, url) {
   return score;
 }
 
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#34;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function extractBalancedJsonStrings(raw) {
+  const text = String(raw || '');
+  const results = [];
+  let start = -1;
+  let quote = '';
+  let escaped = false;
+  const stack = [];
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (start < 0) {
+      if (character === '{' || character === '[') {
+        start = index;
+        stack.length = 0;
+        stack.push(character);
+        quote = '';
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (character === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = '';
+      }
+
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    if (character === '{' || character === '[') {
+      stack.push(character);
+      continue;
+    }
+
+    if (character === '}' || character === ']') {
+      const expected = character === '}' ? '{' : '[';
+
+      if (stack[stack.length - 1] !== expected) {
+        start = -1;
+        stack.length = 0;
+        quote = '';
+        escaped = false;
+        continue;
+      }
+
+      stack.pop();
+
+      if (!stack.length) {
+        results.push(text.slice(start, index + 1));
+        start = -1;
+        quote = '';
+        escaped = false;
+      }
+    }
+  }
+
+  return results;
+}
+
+function parseOkruJsonPayloads(raw) {
+  const decoded = decodeHtmlEntities(raw)
+    .replace(/^\uFEFF/, '')
+    .replace(/^\s*\)\]\}',?\s*/i, '')
+    .replace(/^\s*while\s*\(\s*1\s*\)\s*;?/i, '')
+    .replace(/^\s*for\s*\(\s*;;\s*\)\s*;?/i, '')
+    .trim();
+
+  const values = [];
+  const seenStrings = new Set();
+  const seenObjects = new Set();
+
+  function addValue(value, depth = 0) {
+    if (depth > 5 || value === null || value === undefined) return;
+
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text || seenStrings.has(text)) return;
+      seenStrings.add(text);
+
+      try {
+        addValue(JSON.parse(text), depth + 1);
+      } catch {}
+
+      for (const candidate of extractBalancedJsonStrings(text)) {
+        try {
+          addValue(JSON.parse(candidate), depth + 1);
+        } catch {}
+      }
+
+      return;
+    }
+
+    if (typeof value !== 'object' || seenObjects.has(value)) return;
+    seenObjects.add(value);
+    values.push(value);
+
+    if (Array.isArray(value)) {
+      for (const child of value) addValue(child, depth + 1);
+      return;
+    }
+
+    for (const child of Object.values(value)) {
+      if (child && (typeof child === 'object' || typeof child === 'string')) {
+        addValue(child, depth + 1);
+      }
+    }
+  }
+
+  try {
+    addValue(JSON.parse(decoded));
+  } catch {}
+
+  for (const candidate of extractBalancedJsonStrings(decoded)) {
+    try {
+      addValue(JSON.parse(candidate));
+    } catch {}
+  }
+
+  const attributePatterns = [
+    /\bdata-options\s*=\s*"([^"]+)"/gi,
+    /\bdata-options\s*=\s*'([^']+)'/gi,
+    /\bdata-video\s*=\s*"([^"]+)"/gi,
+    /\bdata-video\s*=\s*'([^']+)'/gi
+  ];
+
+  for (const pattern of attributePatterns) {
+    let match;
+
+    while ((match = pattern.exec(decoded))) {
+      addValue(decodeHtmlEntities(match[1]), 0);
+    }
+  }
+
+  return values;
+}
+
+function collectOkruMediaCandidates(payloads) {
+  const candidates = [];
+  const seen = new Set();
+
+  for (const payload of payloads || []) {
+    for (const candidate of extractOkruMediaCandidates(payload)) {
+      const key = String(candidate.url || '');
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
+}
+
+function extractOkruCandidatesFromText(raw, baseUrl) {
+  const candidates = collectOkruMediaCandidates(
+    parseOkruJsonPayloads(raw)
+  );
+
+  const htmlCandidates = extractMediaFromHtml(
+    decodeHtmlEntities(raw),
+    baseUrl
+  ).candidates;
+
+  const seen = new Set(candidates.map(item => item.url));
+
+  for (const candidate of htmlCandidates) {
+    if (!candidate.url || seen.has(candidate.url)) continue;
+    seen.add(candidate.url);
+    candidates.push(candidate);
+  }
+
+  return candidates;
+}
+
 function extractOkruMediaCandidates(root) {
   const queue = [root];
   const visited = new Set();
@@ -279,39 +480,78 @@ function extractOkruId(value) {
 
 async function resolveOkru(item, fetchOkruHtml) {
   const id = extractOkruId(item.source_url);
-  if (!id) throw new Error('O código do vídeo do OK.ru é inválido.');
 
-  const metadataUrl = new URL('https://ok.ru/dk');
-  metadataUrl.searchParams.set('cmd', 'videoPlayerMetadata');
-  metadataUrl.searchParams.set('mid', id);
-
-  const result = await fetchOkruHtml(metadataUrl);
-  const raw = String(result.html || '')
-    .trim()
-    .replace(/^while\s*\(\s*1\s*\)\s*;?/i, '')
-    .replace(/^for\s*\(\s*;;\s*\)\s*;?/i, '')
-    .trim();
-
-  const starts = [raw.indexOf('{'), raw.indexOf('[')]
-    .filter(index => index >= 0);
-  const start = starts.length ? Math.min(...starts) : -1;
-
-  if (start < 0) {
-    throw new Error('O OK.ru não entregou os dados do vídeo.');
+  if (!id) {
+    throw new Error('O código do vídeo do OK.ru é inválido.');
   }
 
-  const parsed = JSON.parse(raw.slice(start));
-  const candidate = selectBestMediaCandidate(
-    extractOkruMediaCandidates(parsed)
-  );
+  const attempts = [
+    {
+      url: (() => {
+        const metadataUrl = new URL('https://ok.ru/dk');
+        metadataUrl.searchParams.set('cmd', 'videoPlayerMetadata');
+        metadataUrl.searchParams.set('mid', id);
+        return metadataUrl;
+      })(),
+      referer: `https://ok.ru/video/${id}`
+    },
+    {
+      url: new URL(`https://ok.ru/video/${id}`),
+      referer: `https://ok.ru/video/${id}`
+    },
+    {
+      url: new URL(`https://ok.ru/videoembed/${id}`),
+      referer: `https://ok.ru/video/${id}`
+    },
+    {
+      url: new URL(`https://m.ok.ru/video/${id}`),
+      referer: `https://m.ok.ru/video/${id}`
+    }
+  ];
+
+  const allCandidates = [];
+  const seen = new Set();
+  let lastAccessError = null;
+
+  for (const attempt of attempts) {
+    try {
+      const result = await fetchOkruHtml(attempt.url);
+      const candidates = extractOkruCandidatesFromText(
+        result.html,
+        result.finalUrl?.toString?.() || attempt.url.toString()
+      );
+
+      for (const candidate of candidates) {
+        if (!candidate.url || seen.has(candidate.url)) continue;
+        seen.add(candidate.url);
+
+        allCandidates.push({
+          ...candidate,
+          referer: candidate.referer || attempt.referer
+        });
+      }
+    } catch (error) {
+      lastAccessError = error;
+    }
+  }
+
+  const candidate = selectBestMediaCandidate(allCandidates);
 
   if (!candidate) {
-    throw new Error('O OK.ru não disponibilizou um arquivo reproduzível.');
+    const message =
+      lastAccessError &&
+      /recusou|privad|login|acesso/i.test(lastAccessError.message || '')
+        ? 'O vídeo do OK.ru precisa estar público e disponível sem login.'
+        : 'O OK.ru não entregou um arquivo de vídeo reproduzível.';
+
+    const error = new Error(message);
+    error.status = 422;
+    throw error;
   }
 
   return {
     ...candidate,
-    referer: `https://ok.ru/video/${id}`
+    referer: candidate.referer || `https://ok.ru/video/${id}`
   };
 }
 
@@ -765,6 +1005,10 @@ function registerUniversalPlayerRoutes(app, options) {
 module.exports = {
   registerUniversalPlayerRoutes,
   extractOkruMediaCandidates,
+  extractBalancedJsonStrings,
+  parseOkruJsonPayloads,
+  collectOkruMediaCandidates,
+  extractOkruCandidatesFromText,
   selectBestMediaCandidate,
   rewriteHlsPlaylist,
   extractMediaFromHtml,

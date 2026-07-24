@@ -37,7 +37,7 @@ const MAX_GENERIC_ITEMS = 2500;
 const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 const GENERIC_TIMEOUT_MS = 25_000;
 const OKRU_TIMEOUT_MS = 25_000;
-const IMPORTER_VERSION = '10.4.0';
+const IMPORTER_VERSION = '10.5.0';
 
 let catalogCache = null;
 let catalogCacheTime = 0;
