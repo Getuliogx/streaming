@@ -27,3 +27,11 @@ FUNÇÕES DA V10.1
 - clicar no episódio troca o vídeo no mesmo player;
 - adicionar conteúdo em playlist/série já existente;
 - suporte para URL, OK.ru, M3U, M3U8, TXT e demais origens aceitas.
+
+
+CORREÇÃO V10.2
+
+- Ao abrir uma série, nenhum player aparece.
+- O primeiro episódio não é iniciado automaticamente.
+- O player só aparece depois que o usuário clica em um episódio.
+- Um link que já contenha episode= continua abrindo diretamente o episódio escolhido.

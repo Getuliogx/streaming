@@ -7,7 +7,12 @@ const requestedSeason =
   requestedSeasonValue === null || requestedSeasonValue === ''
     ? null
     : Number(requestedSeasonValue);
-const requestedEpisodeId = Number(params.get('episode'));
+const requestedEpisodeValue = params.get('episode');
+const requestedEpisodeId =
+  requestedEpisodeValue === null ||
+  requestedEpisodeValue === ''
+    ? null
+    : Number(requestedEpisodeValue);
 
 const seriesHero = document.querySelector('#seriesHero');
 const seriesPoster = document.querySelector('#seriesPoster');
@@ -331,19 +336,13 @@ function chooseInitialSeason() {
 }
 
 function chooseInitialEpisode() {
-  if (Number.isInteger(requestedEpisodeId)) {
-    const requested = episodes.find(
-      item => Number(item.id) === requestedEpisodeId
-    );
-
-    if (requested) return requested;
+  if (!Number.isInteger(requestedEpisodeId)) {
+    return null;
   }
 
-  return (
-    episodesForSeason(activeSeason)[0] ||
-    episodes[0] ||
-    null
-  );
+  return episodes.find(
+    item => Number(item.id) === requestedEpisodeId
+  ) || null;
 }
 
 function renderSeasonTabs() {
@@ -528,6 +527,8 @@ function selectEpisode(item, options = {}) {
   activeEpisodeId = Number(item.id);
   activeSeason = item.season ?? null;
 
+  seriesPlayerSection.classList.remove('hidden');
+
   renderSeasonTabs();
   renderEpisodes();
   updatePlayerDetails(item);
@@ -686,6 +687,9 @@ async function loadSeries() {
           scroll: false
         }
       );
+    } else {
+      activeEpisodeId = null;
+      seriesPlayerSection.classList.add('hidden');
     }
   } catch (error) {
     seriesTitle.textContent =
