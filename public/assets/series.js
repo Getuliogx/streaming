@@ -9,8 +9,7 @@ const requestedSeason =
     : Number(requestedSeasonValue);
 const requestedEpisodeValue = params.get('episode');
 const requestedEpisodeId =
-  requestedEpisodeValue === null ||
-  requestedEpisodeValue === ''
+  requestedEpisodeValue === null || requestedEpisodeValue === ''
     ? null
     : Number(requestedEpisodeValue);
 
@@ -23,20 +22,9 @@ const seasonTabs = document.querySelector('#seasonTabs');
 const episodeGrid = document.querySelector('#episodeGrid');
 const seriesError = document.querySelector('#seriesError');
 
-const seriesPlayerSection = document.querySelector('#seriesPlayerSection');
-const seriesPlayerMount = document.querySelector('#seriesPlayerMount');
-const seriesPlayerEyebrow = document.querySelector('#seriesPlayerEyebrow');
-const seriesPlayerTitle = document.querySelector('#seriesPlayerTitle');
-const seriesPlayerMeta = document.querySelector('#seriesPlayerMeta');
-const seriesPlayerDescription = document.querySelector('#seriesPlayerDescription');
-const previousSeriesEpisode = document.querySelector('#previousSeriesEpisode');
-const nextSeriesEpisode = document.querySelector('#nextSeriesEpisode');
-
 let episodes = [];
 let seriesInfo = {};
 let activeSeason = null;
-let activeEpisodeId = null;
-let hlsInstance = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -101,148 +89,6 @@ function episodesForSeason(season) {
   );
 }
 
-function extractDriveId(value) {
-  const text = String(value || '').trim();
-  const match =
-    text.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-    text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-
-  return match ? match[1] : text;
-}
-
-function extractOkId(value) {
-  const text = String(value || '').trim();
-  const match =
-    text.match(/(?:videoembed|video)\/(\d+)/) ||
-    text.match(/(\d{6,})/);
-
-  return match ? match[1] : text;
-}
-
-function destroyCurrentPlayer() {
-  if (hlsInstance) {
-    try {
-      hlsInstance.destroy();
-    } catch {}
-    hlsInstance = null;
-  }
-
-  const video = seriesPlayerMount.querySelector('video');
-  if (video) {
-    try {
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-    } catch {}
-  }
-}
-
-function buildIframe(src, title) {
-  destroyCurrentPlayer();
-
-  const iframe = document.createElement('iframe');
-  iframe.src = src;
-  iframe.title = title;
-  iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-  iframe.allowFullscreen = true;
-  iframe.referrerPolicy = 'strict-origin-when-cross-origin';
-
-  seriesPlayerMount.replaceChildren(iframe);
-}
-
-function buildVideo(src, isHls = false, poster = '') {
-  destroyCurrentPlayer();
-
-  const video = document.createElement('video');
-  video.controls = true;
-  video.playsInline = true;
-  video.preload = 'metadata';
-  video.autoplay = false;
-
-  if (poster) video.poster = poster;
-
-  if (
-    isHls &&
-    window.Hls &&
-    window.Hls.isSupported()
-  ) {
-    hlsInstance = new window.Hls({
-      enableWorker: true
-    });
-
-    hlsInstance.loadSource(src);
-    hlsInstance.attachMedia(video);
-
-    hlsInstance.on(
-      window.Hls.Events.ERROR,
-      (_, data) => {
-        if (data.fatal) {
-          showError(
-            'Não foi possível carregar o vídeo HLS. O servidor do vídeo precisa permitir CORS.'
-          );
-        }
-      }
-    );
-  } else {
-    video.src = src;
-  }
-
-  seriesPlayerMount.replaceChildren(video);
-}
-
-function mountPlayer(item) {
-  clearError();
-
-  if (item.source_type === 'okru') {
-    buildIframe(
-      `https://ok.ru/videoembed/${encodeURIComponent(
-        extractOkId(item.source_url)
-      )}`,
-      episodeTitle(item)
-    );
-    return;
-  }
-
-  if (item.source_type === 'gdrive') {
-    buildIframe(
-      `https://drive.google.com/file/d/${encodeURIComponent(
-        extractDriveId(item.source_url)
-      )}/preview`,
-      episodeTitle(item)
-    );
-    return;
-  }
-
-  if (item.source_type === 'hls') {
-    buildVideo(
-      item.source_url,
-      true,
-      item.episode_image_url ||
-        item.backdrop_url ||
-        item.cover_url ||
-        ''
-    );
-    return;
-  }
-
-  if (item.source_type === 'iframe') {
-    buildIframe(
-      item.source_url,
-      episodeTitle(item)
-    );
-    return;
-  }
-
-  buildVideo(
-    item.source_url,
-    false,
-    item.episode_image_url ||
-      item.backdrop_url ||
-      item.cover_url ||
-      ''
-  );
-}
-
 function renderSeriesInfo() {
   const title =
     seriesInfo.title ||
@@ -294,7 +140,7 @@ function renderSeriesInfo() {
 
   seriesDescription.textContent =
     description ||
-    'Escolha um episódio abaixo para ver a descrição dele.';
+    'Escolha uma temporada e depois um episódio para assistir.';
 
   if (cover) {
     seriesPoster.innerHTML =
@@ -322,27 +168,7 @@ function chooseInitialSeason() {
     return requestedSeason;
   }
 
-  if (Number.isInteger(requestedEpisodeId)) {
-    const requestedEpisode = episodes.find(
-      item => Number(item.id) === requestedEpisodeId
-    );
-
-    if (requestedEpisode) {
-      return requestedEpisode.season ?? null;
-    }
-  }
-
   return seasons[0];
-}
-
-function chooseInitialEpisode() {
-  if (!Number.isInteger(requestedEpisodeId)) {
-    return null;
-  }
-
-  return episodes.find(
-    item => Number(item.id) === requestedEpisodeId
-  ) || null;
 }
 
 function renderSeasonTabs() {
@@ -365,9 +191,6 @@ function renderEpisodes() {
   const filtered = episodesForSeason(activeSeason);
 
   episodeGrid.innerHTML = filtered.map(item => {
-    const active =
-      Number(item.id) === Number(activeEpisodeId);
-
     const image =
       item.episode_image_url ||
       item.backdrop_url ||
@@ -396,19 +219,15 @@ function renderEpisodes() {
       : `<div class="episode-thumb-placeholder">${escapeHtml(episodeNumber)}</div>`;
 
     return `
-      <button
-        class="episode-visual-card ${
-          active ? 'active' : ''
-        }"
-        type="button"
-        data-episode-id="${item.id}"
+      <a
+        class="episode-visual-card"
+        href="/watch.html?id=${encodeURIComponent(item.id)}"
+        aria-label="Assistir ${escapeHtml(episodeTitle(item))}"
       >
         <div class="episode-thumb">
           ${thumb}
           <span class="episode-badge">${escapeHtml(badge)}</span>
-          <span class="episode-play-icon">${
-            active ? '▶' : '▷'
-          }</span>
+          <span class="episode-play-icon">▶</span>
         </div>
 
         <div class="episode-visual-content">
@@ -432,153 +251,24 @@ function renderEpisodes() {
             )}
           </span>
         </div>
-      </button>
+      </a>
     `;
   }).join('');
-}
-
-function updatePlayerDetails(item) {
-  seriesPlayerEyebrow.textContent = [
-    seasonLabel(item.season),
-    item.episode !== null &&
-    item.episode !== undefined
-      ? `Episódio ${item.episode}`
-      : 'Episódio'
-  ].join(' • ');
-
-  seriesPlayerTitle.textContent =
-    episodeTitle(item);
-
-  seriesPlayerMeta.textContent = [
-    item.year,
-    item.genres
-  ].filter(Boolean).join(' • ');
-
-  seriesPlayerDescription.textContent =
-    item.description ||
-    'Sem descrição cadastrada para este episódio.';
-}
-
-function updatePreviousNext() {
-  const index = episodes.findIndex(
-    item =>
-      Number(item.id) ===
-      Number(activeEpisodeId)
-  );
-
-  const previous =
-    index > 0
-      ? episodes[index - 1]
-      : null;
-
-  const next =
-    index >= 0 &&
-    index < episodes.length - 1
-      ? episodes[index + 1]
-      : null;
-
-  previousSeriesEpisode.classList.toggle(
-    'hidden',
-    !previous
-  );
-
-  nextSeriesEpisode.classList.toggle(
-    'hidden',
-    !next
-  );
-
-  previousSeriesEpisode.dataset.episodeId =
-    previous ? String(previous.id) : '';
-
-  nextSeriesEpisode.dataset.episodeId =
-    next ? String(next.id) : '';
-}
-
-function addToHistory(item) {
-  let history = [];
-
-  try {
-    history = JSON.parse(
-      localStorage.getItem('streamHistory') ||
-      '[]'
-    );
-  } catch {}
-
-  history = history.filter(
-    entry =>
-      Number(entry.id) !== Number(item.id)
-  );
-
-  history.unshift({
-    id: item.id,
-    title: episodeTitle(item),
-    watched_at: new Date().toISOString()
-  });
-
-  localStorage.setItem(
-    'streamHistory',
-    JSON.stringify(history.slice(0, 50))
-  );
-}
-
-function selectEpisode(item, options = {}) {
-  if (!item) return;
-
-  activeEpisodeId = Number(item.id);
-  activeSeason = item.season ?? null;
-
-  seriesPlayerSection.classList.remove('hidden');
-
-  renderSeasonTabs();
-  renderEpisodes();
-  updatePlayerDetails(item);
-  updatePreviousNext();
-  mountPlayer(item);
-  addToHistory(item);
-
-  const nextUrl = new URL(location.href);
-  nextUrl.searchParams.set(
-    'title',
-    item.series_title || requestedTitle
-  );
-  nextUrl.searchParams.set(
-    'season',
-    item.season ?? ''
-  );
-  nextUrl.searchParams.set(
-    'episode',
-    item.id
-  );
-
-  history.replaceState(
-    null,
-    '',
-    nextUrl.pathname +
-      nextUrl.search +
-      nextUrl.hash
-  );
-
-  if (options.scroll !== false) {
-    seriesPlayerSection.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    });
-  }
-}
-
-function selectEpisodeById(id, options = {}) {
-  const item = episodes.find(
-    episode =>
-      Number(episode.id) === Number(id)
-  );
-
-  if (item) selectEpisode(item, options);
 }
 
 function setSeason(nextSeason) {
   activeSeason = nextSeason;
   renderSeasonTabs();
   renderEpisodes();
+
+  const nextUrl = new URL(location.href);
+  nextUrl.searchParams.set('season', nextSeason ?? '');
+  nextUrl.searchParams.delete('episode');
+  history.replaceState(
+    null,
+    '',
+    nextUrl.pathname + nextUrl.search + nextUrl.hash
+  );
 }
 
 seasonTabs.addEventListener('click', event => {
@@ -596,52 +286,18 @@ seasonTabs.addEventListener('click', event => {
   setSeason(nextSeason);
 });
 
-episodeGrid.addEventListener('click', event => {
-  const button = event.target.closest(
-    'button[data-episode-id]'
-  );
-
-  if (!button) return;
-
-  selectEpisodeById(
-    button.dataset.episodeId
-  );
-});
-
-previousSeriesEpisode.addEventListener(
-  'click',
-  () => {
-    selectEpisodeById(
-      previousSeriesEpisode.dataset.episodeId
-    );
-  }
-);
-
-nextSeriesEpisode.addEventListener(
-  'click',
-  () => {
-    selectEpisodeById(
-      nextSeriesEpisode.dataset.episodeId
-    );
-  }
-);
-
 async function loadSeries() {
   if (!requestedTitle.trim()) {
-    showError(
-      'O nome da série não foi informado.'
-    );
+    showError('O nome da série não foi informado.');
     return;
   }
 
   try {
+    clearError();
+
     const response = await fetch(
-      `/api/series?title=${encodeURIComponent(
-        requestedTitle
-      )}`,
-      {
-        cache: 'no-store'
-      }
+      `/api/series?title=${encodeURIComponent(requestedTitle)}`,
+      { cache: 'no-store' }
     );
 
     const body = await response.json();
@@ -671,37 +327,30 @@ async function loadSeries() {
       );
     }
 
-    renderSeriesInfo();
+    // Compatibilidade com links antigos que ainda tenham &episode=.
+    // O episódio é sempre aberto no mesmo watch.html usado pelos filmes.
+    if (Number.isInteger(requestedEpisodeId)) {
+      const requestedEpisode = episodes.find(
+        item => Number(item.id) === requestedEpisodeId
+      );
 
+      if (requestedEpisode) {
+        location.replace(
+          `/watch.html?id=${encodeURIComponent(requestedEpisode.id)}`
+        );
+        return;
+      }
+    }
+
+    renderSeriesInfo();
     activeSeason = chooseInitialSeason();
     renderSeasonTabs();
     renderEpisodes();
-
-    const initialEpisode =
-      chooseInitialEpisode();
-
-    if (initialEpisode) {
-      selectEpisode(
-        initialEpisode,
-        {
-          scroll: false
-        }
-      );
-    } else {
-      activeEpisodeId = null;
-      seriesPlayerSection.classList.add('hidden');
-    }
   } catch (error) {
     seriesTitle.textContent =
       'Não foi possível abrir a série';
-
     showError(error.message);
   }
 }
-
-window.addEventListener(
-  'beforeunload',
-  destroyCurrentPlayer
-);
 
 loadSeries();

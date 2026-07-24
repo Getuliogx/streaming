@@ -1,0 +1,11 @@
+VALIDAÇÃO V10.3 — PLAYER ÚNICO
+
+versao: 10.3.0
+series_sem_player_html: OK
+series_sem_hls: OK
+episodio_abre_watch: OK
+links_antigos_redirecionam_watch: OK
+voltar_temporadas_sem_episode: OK
+cmd_incluido: OK
+
+Filmes e episódios usam o mesmo public/watch.html e public/assets/watch.js.

@@ -80,3 +80,12 @@ Docker, HTTPS, porta ou configuração da Oracle.
 
 A versão 10.1 também impede que uma importação destinada a uma playlist
 existente remova um item anterior com a mesma URL da página importada.
+
+
+## V10.3 — Player único para filmes e episódios
+
+- `series.html` mostra somente a série, temporadas e episódios.
+- A página de série não cria iframe, vídeo ou player.
+- Todo episódio abre `watch.html?id=ID`.
+- Filmes e episódios usam exatamente o mesmo `watch.html` e `watch.js`.
+- Links antigos com `series.html?...&episode=ID` são redirecionados para `watch.html?id=ID`.

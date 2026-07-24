@@ -1,8 +1,8 @@
 {
   "name": "minha-stream-simples",
-  "version": "10.2.0",
+  "version": "10.3.0",
   "private": true,
-  "description": "Site de streaming completo com descrição individual por episódio, player único para séries e importação em playlists existentes.",
+  "description": "Minha Stream com um único watch.html para filmes e episódios, descrições individuais e importação em playlists existentes.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

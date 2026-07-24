@@ -35,3 +35,12 @@ CORREÇÃO V10.2
 - O primeiro episódio não é iniciado automaticamente.
 - O player só aparece depois que o usuário clica em um episódio.
 - Um link que já contenha episode= continua abrindo diretamente o episódio escolhido.
+
+
+CORREÇÃO V10.3 — PLAYER ÚNICO REAL
+
+- A página series.html não contém nenhum player.
+- Ao clicar em um episódio, abre /watch.html?id=ID.
+- Filmes e episódios usam literalmente o mesmo watch.html e watch.js.
+- O botão Temporadas retorna à lista sem reabrir o episódio.
+- Links antigos de série com &episode= são redirecionados para watch.html.

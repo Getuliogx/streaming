@@ -201,7 +201,7 @@ async function loadRelatedEpisodes(seriesTitle) {
     renderWatchEpisodes();
     updatePreviousNext();
     relatedEpisodes.classList.remove('hidden');
-    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${activeSeason ?? ''}&episode=${id}`;
+    seriesBackButton.href = `/series.html?title=${encodeURIComponent(seriesTitle)}&season=${activeSeason ?? ''}`;
     seriesBackButton.classList.remove('hidden');
   } catch (error) {
     console.error(error);
